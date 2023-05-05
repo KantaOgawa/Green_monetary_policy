@@ -1,0 +1,880 @@
+---
+title: "New_Taylor_rule_India"
+author: "Kanta Ogawa"
+date: "2022-11-24"
+output: html_document
+---
+
+policy interest rate(overnight)
+<https://fred.stlouisfed.org/series/IRSTCB01INM156N>
+
+# inflation measure \pi_{t
+-CPI_price level and CPI(inflation measure)
+<https://fred.stlouisfed.org/series/CPALTT01INQ657N>
+
+# inflation target \pi^{*}_{t} 
+-2 pct, 4pct, 6pct
+
+# Natural interest rate r^{*}_{t}
+-2 pct?
+<https://www.boj.or.jp/en/research/wps_rev/wps_2018/data/wp18e06.pdf>
+ In the Örst approach, the natural rate is distilled as the trend component of the actual real interest rate, using the Hodrick-Prescott Ölter, a band-pass Ölter, or other more sophisticated time series methodologies.
+
+
+# Resource gap measures: gap
+#India potential gdp
+HP filter,
+It is important to note here that standalone estimates of potential output and output gap using any standard time series technique (such as a Hodrick-Prescott Filter) could yield very different results compared with LW model consistent measures, and therefore, it is not advisable to use natural rate estimated from a LW framework in a Taylor type rule that otherwise uses independently estimated measures of output gap.
+
+
+<https://www.oecd.org/economy/growth/23527966.pdf>
+
+<https://m.rbi.org.in/scripts/bs_viewcontent.aspx?Id=2239>
+
+
+
+
+
+#Interest-rate smoothing parameter \rho
+0 and 0.85
+
+
+# Weight on the resource gap: \beta
+0.5 and 1
+
+`
+
+
+```{r ibrary, include=FALSE}
+
+library(tidyverse)
+pacman::p_load(dplyr, mFilter, devtools,vars)
+#devtools::install_github("KevinKotze/tsm")
+library(tsm)
+
+pacman::p_load(ggplot2, openxlsx,lubridate, bsts)
+```
+
+
+
+```{r read data, include=FALSE}
+df_real_gdp_2015_usdollar <- read_csv("../Monetary_policy/data/india/World_Bank/Real_gdp_2015_USdollar.csv")
+df_nominal_gdp <- read_csv("../Monetary_policy/data/india//World_Bank/Nominal_gdp.csv")
+
+df_nominal_interest_india <- read_csv("../Monetary_policy/data/india/Policy_interest_rate_india_annual.csv")
+df_inflation_india <- read_csv("../Monetary_policy/data/india/CPI_growth_rate_india_annual.csv")
+df_price_level_india <- read_csv("../Monetary_policy/data/india/CPI_india_annual.csv")
+df_real_interest <- read_csv("../Monetary_policy/data/india/World_Bank/Real_interest_rate.csv")
+
+# from <https://ourworldindata.org/co2-emissions>
+df_carbon <- read_csv("../Monetary_policy/data/Annual-co2-emissions-Our_World_in_data.csv")
+
+```
+
+
+```{r gdp, include=FALSE}
+# exchange rte : 2015  64.152 rupee / per usdollar
+# Price level:2010 67.293593,  2015: 100.000000,
+
+df_real_gdp_transform <- df_real_gdp_2015_usdollar %>%
+  transform(`1999` = as.numeric(1999))
+
+df_real_gdp_transform$X1999 <-  df_real_gdp_2015_usdollar$`1999`
+
+
+df_real_gdp_india_2010rupee <- df_real_gdp_transform %>%
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year"
+  ) %>%
+  mutate(year = str_remove_all(year, "X")) %>%
+  mutate(year = as.integer(year)) %>%
+  rename("country_code" = Country.Code, 
+         "Real_GDP_2015USdollar" = value) %>%
+  mutate(Real_GDP_2010rupee = Real_GDP_2015USdollar * (64.152) *(67.293593/100),
+         log_Real_GDP_2010rupee = log(Real_GDP_2010rupee),
+         Real_GDP_Billions_2010rupee = Real_GDP_2010rupee/(10^(9)) ) %>%
+  filter(country_code == "IND") %>%
+  dplyr::select(year, Real_GDP_2010rupee,log_Real_GDP_2010rupee, Real_GDP_Billions_2010rupee)
+
+
+
+#nominal gdp
+df_nominal_gdp_transform <- df_nominal_gdp%>%
+  transform(`1999` = as.numeric(1999))
+
+df_nominal_gdp_transform$X1999 <-  df_nominal_gdp$`1999`
+
+df_nominal_gdp_india <- df_nominal_gdp_transform %>%
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year"
+  )%>%
+  mutate(year = str_remove_all(year, "X")) %>%
+  mutate(year = as.integer(year)) %>%
+  rename("country_code" = Country.Code, 
+         "Nominal_GDP_rupee" = value) %>%
+  mutate(Nominal_GDP_Billions_rupee = Nominal_GDP_rupee/(10^(9)))%>%
+  filter(country_code == "IND") %>%
+  dplyr::select(year, Nominal_GDP_rupee, Nominal_GDP_Billions_rupee) 
+
+# HP filter
+df_real_gdp_india_2010rupee$Real_output_gap_2010rupee_hp <- hpfilter(log(df_real_gdp_india_2010rupee$Real_GDP_2010rupee),freq=6.25, type="lambda", drift=TRUE)$cycle * 100
+
+
+# bk filter <https://kevinkotze.github.io/ts-5-tut/>
+df_real_gdp_india_2010rupee$Real_output_gap_2010rupee_bk <- bkfilter(log(df_real_gdp_india_2010rupee$Real_GDP_2010rupee),  pl = 6, pu = 32, drift=TRUE)$cycle * 100
+
+# bn filter
+
+Real_output_gap_2010rupee_bn_decomp <- bnd(log(df_real_gdp_india_2010rupee$Real_GDP_2010rupee), nlag = 8)  # apply the BN decomposition that creates dataframe
+
+bn.trend <- ts(Real_output_gap_2010rupee_bn_decomp[, 1], start = c(1960), frequency = 1)  # first column contains trend
+bn.cycle <- ts(Real_output_gap_2010rupee_bn_decomp[, 2], start = c(1960), frequency = 1)  # second column contains cycle
+df_real_gdp_india_2010rupee$Real_output_gap_2016rupee_bn <- bn.cycle*100
+
+
+
+
+df_combined_gdp_india <- full_join(df_real_gdp_india_2010rupee, df_nominal_gdp_india, by="year") %>%
+  mutate(year = as.integer(year))
+
+```
+
+
+
+```{r interest and inflation rate, include=FALSE}
+
+df_nominal_interest_india <- df_nominal_interest_india %>% 
+  mutate(year=format(DATE, "%Y"),
+         nominal_interest_rate_india = IRSTCB01INA156N) %>%
+  dplyr::select(year, nominal_interest_rate_india)
+
+
+df_inflation_india <- df_inflation_india %>%
+   mutate(year=format(DATE, "%Y"),
+         inflation_rate_india = CPALTT01INA659N) %>%
+   dplyr::select(year, inflation_rate_india)
+
+df_price_level_india <- df_price_level_india %>%
+   mutate(year=format(DATE, "%Y"),
+          price_level_india_2015 = INDCPIALLAINMEI)
+  
+df_price_level_india  <- df_price_level_india %>%
+   mutate(price_level_india_2010 = price_level_india_2015/67.3) %>% # df_price_level_india[df_price_level_india$year == "2010", "price_level_india_2015"]) = 67.3
+   dplyr::select(year, price_level_india_2010)
+
+# real interest
+
+  
+df_real_interest_transform <- df_real_interest %>%
+  transform(`1999` = as.numeric(1999))
+
+df_real_interest_transform$X1999 <-  df_real_interest$`1999`
+
+df_real_interest_india <- df_real_interest_transform %>%
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year"
+  )%>%
+  mutate(year = str_remove_all(year, "X")) %>%
+  mutate(year = as.integer(year)) %>%
+  rename("country_code" = Country.Code, 
+         "Real_interest" = value) %>%
+  filter(country_code == "IND") %>%
+  dplyr::select(year, Real_interest)
+
+df_real_interest_india <- df_real_interest_india[complete.cases(df_real_interest_india),]
+
+## <https://www.jstor.org/stable/3211784#metadata_info_tab_contents>
+df_real_interest_india$Natural_interest_hp <- hpfilter(df_real_interest_india$Real_interest, freq=6.25, type="lambda", drift=TRUE)$trend
+# bind data
+  
+
+df_cb_india <- full_join(df_nominal_interest_india, df_inflation_india,by="year")
+df_cb_india <- full_join(df_cb_india, df_price_level_india, by="year") %>%
+  mutate(year = as.integer(year))
+ 
+df_macro_india <- full_join(df_cb_india,df_combined_gdp_india, by="year")  
+
+df_macro_india <- full_join(df_macro_india, df_real_interest_india, by="year")
+ 
+df_macro_india <-  df_macro_india %>%
+   mutate(Past_inflation_rate_1 = lag(inflation_rate_india,n=1),
+          Past_inflation_rate_2 = lag(inflation_rate_india,n=2),
+          Past_inflation_rate_3 = lag(inflation_rate_india,n=3),
+          Past_inflation_rate_4 = lag(inflation_rate_india,n=4),
+          natural_interest_2pct = 2,
+          inflation_target_2pct = 2,
+          inflation_target_4pct = 4,
+          inflation_target_6pct = 6,
+          nominal_interest_rate_india_one_yaer_lag = lag(inflation_rate_india,n=1)
+          ) 
+ 
+df_macro_india <-  df_macro_india %>%
+    mutate(Expectated_inflation_rate = (Past_inflation_rate_1 + Past_inflation_rate_2 + Past_inflation_rate_3 + Past_inflation_rate_4)/4)
+     
+
+plot(x=df_macro_india$year, y=df_macro_india$nominal_interest_rate_india, 
+     type='l', 
+     col = 'darkorange', 
+     main="Policy rate in India",
+     xlab= "year",
+     ylab="Policy interest rate (%)"
+       )
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+```
+
+
+
+
+```{r carbon, echo=FALSE }
+
+# CO2 emission
+df_carbon <- df_carbon %>%
+  rename("year"=Year,"country_code" = Code, "CO2_t" = `Annual CO2 emissions`)%>%
+  filter(year >= 1960)
+
+df_carbon_india <- df_carbon %>%
+    filter(country_code == "IND")
+
+ggplot(data=df_carbon_india,aes(x=year,y=CO2_t)) + 
+  geom_line()
+
+```
+
+From DICE model
+
+# Base parametes
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 31.21 2010 international US dollars / tCO2
+
+14.598  rupee/ 2010 international US dollars
+
+```{r carbon data creation, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_base <- rev(GeometricSequence(56, initial.value = (14.598*31.21)/1.03, discount.factor = 1/1.03) )
+
+pre_2015_start_year_base <- 2015 - length(vec_pre_2015_base)
+pre_2015_base <- pre_2015_start_year_base:2014
+
+
+
+vec_post_2015_base <- GeometricSequence(8, initial.value = 14.598*31.21, discount.factor = 1.03) 
+post_2015_end_year_base <- 2015 + length(vec_post_2015_base) - 1
+post_2015_base <- 2015:post_2015_end_year_base
+
+
+
+# check length
+length(c(vec_pre_2015_base, vec_post_2015_base))
+length(c(pre_2015_base, post_2015_base))
+
+# combined vec
+Carbon_price_2010rupee_base <- c(vec_pre_2015_base, vec_post_2015_base)
+year <- c(pre_2015_base, post_2015_base)
+df_carbon_price_india_base <- data.frame(year, Carbon_price_2010rupee_base) 
+ggplot(data=df_carbon_price_india_base, aes(x=year, y=Carbon_price_2010rupee_base) )  +geom_line()
+
+```
+
+# 2.5 degree maximum - Maimum
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 184.4    2010 international US dollars / tCO2
+
+14.598  rupee/ 2010 international US dollars
+
+```{r carbon data creation, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_max_max <- rev(GeometricSequence(56, initial.value = (14.598*184.4)/1.03, discount.factor = 1/1.03) )
+
+pre_2015_start_year_max_max <- 2015 - length(vec_pre_2015_max_max)
+pre_2015_max_max <- pre_2015_start_year_max_max:2014
+
+
+
+vec_post_2015_max_max <- GeometricSequence(8, initial.value = 14.598*184.4, discount.factor = 1.03) 
+post_2015_end_year_max_max <- 2015 + length(vec_post_2015_max_max) - 1
+post_2015_max_max <- 2015:post_2015_end_year_max_max
+
+
+
+# check length
+length(c(vec_pre_2015_max_max, vec_post_2015_max_max))
+length(c(pre_2015_max_max, post_2015_max_max))
+
+# combined vec
+Carbon_price_2010rupee_max_max <- c(vec_pre_2015_max_max, vec_post_2015_max_max)
+year <- c(pre_2015_max_max, post_2015_max_max)
+df_carbon_price_india_max_max <- data.frame(year, Carbon_price_2010rupee_max_max) 
+ggplot(data=df_carbon_price_india_max_max, aes(x=year, y=Carbon_price_2010rupee_max_max) )  +geom_line()
+
+
+
+
+```
+# 2.5 degree maximum - max_100y
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 106.7 2010 international US dollars / tCO2
+
+```{r carbon data creation, echo=FALSE}
+
+
+
+vec_pre_2015_max_100y <- rev(GeometricSequence(56, initial.value = (14.598*106.7)/1.03, discount.factor = 1/1.03) )
+
+pre_2015_start_year_max_100y <- 2015 - length(vec_pre_2015_max_100y)
+pre_2015_max_100y <- pre_2015_start_year_max_100y:2014
+
+
+
+vec_post_2015_max_100y <- GeometricSequence(8, initial.value = 14.598*106.7, discount.factor = 1.03) 
+post_2015_end_year_max_100y <- 2015 + length(vec_post_2015_max_100y) - 1
+post_2015_max_100y <- 2015:post_2015_end_year_max_100y
+
+
+
+# check length
+length(c(vec_pre_2015_max_100y, vec_post_2015_max_100y))
+length(c(pre_2015_max_100y, post_2015_max_100y))
+
+# combined vec
+Carbon_price_2010rupee_max_100y <- c(vec_pre_2015_max_100y, vec_post_2015_max_100y)
+year <- c(pre_2015_max_100y, post_2015_max_100y)
+df_carbon_price_india_max_100y <- data.frame(year, Carbon_price_2010rupee_max_100y) 
+ggplot(data=df_carbon_price_india_max_100y, aes(x=year, y=Carbon_price_2010rupee_max_100y) )  +geom_line()
+
+
+
+
+
+
+```
+
+
+
+
+
+# carbon price
+
+
+```{r data creation}
+df_all_india <- full_join(df_macro_india,df_carbon_india, by="year")
+
+df_all_india <- full_join(df_all_india, df_carbon_price_india_base,by="year")
+
+df_all_india <- full_join(df_all_india,df_carbon_price_india_max_max, by="year")
+
+df_all_india <- full_join(df_all_india,df_carbon_price_india_max_100y, by="year")
+
+
+```
+
+
+# base parametes
+
+```{r base data creation}
+df_all_india_base <- df_all_india %>%
+  mutate(Nominal_carbon_price_base_india = price_level_india_2010*Carbon_price_2010rupee_base) %>%
+  mutate(Nominal_total_carbon_cost_Billions_rupee_base = (Nominal_carbon_price_base_india * CO2_t) / 10^9) %>%
+  mutate(Nominal_caron_cost_over_Nominal_GDP_pct_india_base = (Nominal_total_carbon_cost_Billions_rupee_base / Nominal_GDP_Billions_rupee) * 100) %>%
+ mutate(Optimal_price_india_2010_base = (Nominal_GDP_Billions_rupee +  Nominal_total_carbon_cost_Billions_rupee_base)/ Real_GDP_Billions_2010rupee) %>% 
+  mutate(Price_india_2010_from_gdp_base = Nominal_GDP_Billions_rupee / Real_GDP_Billions_2010rupee) %>%
+  mutate(Real_potential_GDP_Billions_2010rupee_hp = Real_GDP_Billions_2010rupee /((Real_output_gap_2010rupee_hp/100) + 1)) %>%
+  mutate(Real_potential_GDP_Billions_2010rupee_bk = Real_GDP_Billions_2010rupee /((Real_output_gap_2010rupee_bk/100) + 1))%>%
+  mutate(Optimal_real_GDP_Billions_rupee_2010_hp_base = (Price_india_2010_from_gdp_base * Real_potential_GDP_Billions_2010rupee_hp) / Optimal_price_india_2010_base) %>%
+  mutate(Optimal_real_GDP_Billions_rupee_2010_bk_base = (Price_india_2010_from_gdp_base * Real_potential_GDP_Billions_2010rupee_bk) / Optimal_price_india_2010_base) %>%
+  mutate(Revised_output_gap_india_pct_hp_base = (( Real_GDP_Billions_2010rupee  - Optimal_real_GDP_Billions_rupee_2010_hp_base)/ Optimal_real_GDP_Billions_rupee_2010_hp_base) *100)%>%
+  mutate(Revised_output_gap_india_pct_bk_base = (( Real_GDP_Billions_2010rupee  - Optimal_real_GDP_Billions_rupee_2010_bk_base)/ Optimal_real_GDP_Billions_rupee_2010_bk_base) *100)%>%
+  mutate(Price_gap = ((Optimal_price_india_2010_base - Price_india_2010_from_gdp_base)/Price_india_2010_from_gdp_base)*100)
+
+df_all_india$Real_output_gap_2010rupee_hp
+
+df_all_india$Real_output_gap_2010rupee_bk
+
+```
+
+
+
+
+```{r data bind}
+
+
+## Compare price level
+
+g_price_level_compare_india_base  <- ggplot(data=df_all_india_base, aes(x=year, y=Optimal_price_india_2010_base, color="Optimal  price level base 2012") )  + geom_line() + ylim(0,1.2) + xlab("Quarterly Periods") + ylab("price level based 2012")
+
+g_price_level_compare_india_base <- g_price_level_compare_india_base +geom_line(data=df_all_india_base, aes(x=year, y=Price_india_2010_from_gdp_base, color="price level base 2012") )
+print(g_price_level_compare_india_base)
+
+
+## Compare GDP
+g_gdp_compare_india_base  <- ggplot(data=df_all_india_base, aes(x=year, y= Optimal_real_GDP_Billions_rupee_2010_base, color="(Optimal_real_GDP_Billions_rupee_2010_base") )  
++geom_line() + xlab("Quarterly Periods") + ylab("Billions of rupee  2010 base")
+
+g_gdp_compare_india_base <- g_gdp_compare_india_base +geom_line(data=df_all_india_base, aes(x=year, y=Real_GDP_Billions_2010rupee, color="Real GDP Billions of rupee 2010 base") )
+print(g_gdp_compare_india_base)
+
+## Compare log GDP
+
+g_log_gdp_compare_india_base  <- ggplot(data=df_all_india_base, aes(x=year, y=log(Optimal_real_GDP_Billions_rupee_2010_base), color="log Optimal real GDP Billions of rupee 2010 base") )  + geom_line()  + xlab("Quarterly Periods") 
+
+
+g_log_gdp_compare_india_base <- g_log_gdp_compare_india_base+ geom_line(data=df_all_india_base, aes(x=year, y=log(Real_GDP_Billions_2010rupee), color="log Real GDP Billions of rupee 2010 base") )
+print(g_log_gdp_compare_india_base)
+
+plot(x=df_all_india_base$year, y=df_all_india_base$Revised_output_gap_india_pct_base, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Conventional Real Output gap of CBO",
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)",
+     ylim=c(-20,20)
+       )
+
+  
+
+lines(x=df_all_india_base$year, y=df_all_india_base$Real_gdp_gap_cbo, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-20,20),
+      xlab="",
+      ylab="")
+
+
+
+legend("topright",
+      legend  =c("Revised Real Output gap(%)","Conventional Real Output gap of CBO%()"),
+      col=c("red", "black"),
+      lwd=2,
+      lty=c(1,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r base data plot}
+# "Nominal caron cost vs _Nominal_GDP (%)"
+plot(x=df_all_india$year, y=df_all_india$Nominal_caron_cost_over_Nominal_GDP_pct_india, 
+     type='l', 
+     col = 'blue', 
+     main="Nominal caron cost vs _Nominal_GDP (%)",
+     xlab= "year",
+     ylab="Nominal caron cost vs _Nominal_GDP (%)"
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+# price level indiia
+g_price_level_compare  <- ggplot(data=df_all_india, aes(x=year, y=Optimal_price_india_base_2016, color="Optimal price level base 2016") )  + geom_line() + ylim(0,1.2) + xlab("year") + ylab("Price level based on 2016")
+
+g_price_level_compare <- g_price_level_compare + geom_line(data=df_all_india, aes(x=year, y=price_level_india_2016, color="Price level base 2016 in India") )
+print(g_price_level_compare)
+
+# real  gdp
+g_gdp_compare  <- ggplot(data=df_all_india, aes(x=year, y=Optimal_real_GDP_Billions_rupee_2016, color="Optimal real GDP Billions of rupee 2016") )  +geom_line() + xlab("year") + ylab("Billions of rupee based on 2016")
+
+g_gdp_compare <- g_gdp_compare +geom_line(data=df_all_india, aes(x=year, y=Real_GDP_Billions_2016rupee, color="Real GDP Billions of rupee 2016") )
+print(g_gdp_compare)
+
+# lof real gdp
+g_log_gdp_compare  <- ggplot(data=df_all_india, aes(x=year, y=log(Optimal_real_GDP_Billions_rupee_2016), color="log Optimal real GDP Billions of rupee 2016") )  + geom_line()  + xlab("year") 
+
+
+g_log_gdp_compare <- g_log_gdp_compare +geom_line(data=df_all_india, aes(x=year, y=log(Real_GDP_Billions_2016rupee), color="log Real GDP Billions of rupee 2016") )
+print(g_log_gdp_compare)
+
+# output gap
+plot(x=df_all_india$year, y=df_all_india$Revised_output_gap_india_pct, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Coonventional Real Output gap esatimed by HP filter",
+     xlab= "year",
+     ylab="Output gap (%)",
+     ylim=c(-20,20)
+       )
+par(new=T)
+  
+plot(x=df_all_india$year, y=df_all_india$Real_output_gap_2016rupee_hp, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-20,20),
+      add=TRUE,
+      xlab="",
+      ylab="")
+
+par(new=T)
+
+plot(x=df_all_india$year, y=df_all_india$Real_output_gap_2016rupee_bk, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(-20,20),
+      add=TRUE,
+      xlab="",
+      ylab="")
+
+par(new=T)
+
+plot(x=df_all_india$year, y=df_all_india$Real_output_gap_2016rupee_bn, 
+      type='l',
+      lty=2,
+      col = 'purple',
+      ylim=c(-20,20),
+      add=TRUE,
+      xlab="",
+      ylab="")
+
+
+
+
+
+legend("bottomright",
+      legend  =c("Revised Real Output gap(%)","Real Output gap estimated by HP(%)", "Real Output gap estimated by bk(%)", "Real Output gap estimated by bn%()"),
+      col=c("red", "black", "orange","purple"),
+      lwd=2,
+      lty=c(1,1,2,2))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+g_outputgap <- ggplot(data=df_all_india,aes(x=year, y=Revised_output_gap_india_pct, color=Revised_output_gap_india_pct))+geom_line() 
+g_outputgap <- g_outputgap + geom_line(data=df_all_india, aes(x=year, y=Real_output_gap_2016rupee_hp, color=Real_output_gap_2016rupee_hp))
+print(g_outputgap)
+
+```
+
+
+
+
+
+```{r Taylor rule plot}
+
+df_all_india$Natural_interest_hp
+df_all_india <- df_all_india %>%
+  mutate(Revised_Policy_rule_1 = 0.85 *nominal_interest_rate_india_one_yaer_lag 
+         + (1 - 0.85 )*((natural_interest_2pct + inflation_target_4pct) + 1.5* (inflation_rate_india -  inflation_target_4pct) + Revised_output_gap_india_pct), # natural interest 2%
+         Revised_Policy_rule_2 = ((natural_interest_2pct + inflation_target_4pct) + 1.5* (inflation_rate_india -inflation_target_4pct) + 0.5* Revised_output_gap_india_pct), # natural interest 2%
+         Revised_Policy_rule_3 = 0.85 *nominal_interest_rate_india_one_yaer_lag
+         + (1 - 0.85 )*((Natural_interest_hp  + inflation_target_4pct) + 1.5* (inflation_rate_india -  inflation_target_4pct) + Revised_output_gap_india_pct), # natural interest estimated by hp
+         Revised_Policy_rule_4 = ((Natural_interest_hp + inflation_target_4pct) + 1.5* (inflation_rate_india -inflation_target_4pct) + 0.5* Revised_output_gap_india_pct), # natural interest estimated by hp
+         Conventional_policy_1 = 0.85 *nominal_interest_rate_india_one_yaer_lag 
+         + (1 - 0.85 )*((natural_interest_2pct  + inflation_target_4pct) + 1.5* (inflation_rate_india -  inflation_target_4pct) +Real_output_gap_2016rupee_bk), # natural interest 2%
+         Conventional_policy_2 = ((natural_interest_2pct  +inflation_target_4pct) + 1.5* (inflation_rate_india -  inflation_target_4pct) + Real_output_gap_2016rupee_bk), # natural interest 2%
+         Conventional_policy_3 = 0.85 *nominal_interest_rate_india_one_yaer_lag 
+         + (1 - 0.85 )*((Natural_interest_hp  + inflation_target_4pct) + 1.5* (inflation_rate_india -  inflation_target_4pct) +Real_output_gap_2016rupee_bk), # natural interest estimated by hp
+         Conventional_policy_4 = ((Natural_interest_hp  +inflation_target_4pct) + 1.5* (inflation_rate_india -  inflation_target_4pct) + Real_output_gap_2016rupee_bk)  # natural interest estimated by hp
+         ) 
+
+  
+plot(x=df_all_india$year, y=df_all_india$Revised_Policy_rule_1, 
+     type='l', 
+     lty=2,
+     xlab= "year",
+     ylab="Interest rate (%)",
+     ylim=c(-5,25),
+     main="Policy rule vs Actual FF rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_india$year, y=df_all_india$Conventional_policy_1, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-5,25),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+df_all_india$nominal_interest_rate_india
+plot(x=df_all_india$year, y=df_all_india$nominal_interest_rate_india, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-5,25),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+      legend  =c("Revised Policy rule 1","Conventional policy 1", "Acutual Policy rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+```
+
+```{r Taylor rule plot2}
+  
+plot(x=df_all_india$year, y=df_all_india$Revised_Policy_rule_2, 
+     type='l', 
+     lty=2,
+     xlab= "year",
+     ylab="Interest rate (%)",
+     ylim=c(-10,40),
+     main="Policy rule vs Actual FF rate",
+     col = 'green'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_india$year, y=df_all_india$Conventional_policy_2, 
+      type='l',
+      lty=2,
+      col = 'purple',
+      ylim=c(-10,40),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_india$year, y=df_all_india$nominal_interest_rate_india, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,40),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+      legend  =c("Revised Policy rule 2","Conventional policy 2", "Acutual Federal Fund rate"),
+      col=c("green", "purple","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+
+```
+
+
+```{r Taylor rule plot3}
+
+# baseline
+# natural interest rate: estimated by hp filter
+# output gap is estimated by bk
+
+  
+plot(x=df_all_india$year, y=df_all_india$Revised_Policy_rule_3, 
+     type='l', 
+     lty=2,
+     xlab= "year",
+     ylab="Interest rate (%)",
+     ylim=c(-5,20),
+     main="Taylor rule vs Actual Policy interest rate",
+     col = 'green'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_india$year, y=df_all_india$Conventional_policy_3, 
+      type='l',
+      lty=2,
+      col = 'purple',
+      ylim=c(-5,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_india$year, y=df_all_india$nominal_interest_rate_india, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-5,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+      legend  =c("Revised Policy rule 3","Conventional policy 3", "Acutual Policy interest rate"),
+      col=c("green", "purple","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+
+```
+
+```{r Taylor rule plot4}
+  
+plot(x=df_all_india$year, y=df_all_india$Revised_Policy_rule_4, 
+     type='l', 
+     lty=2,
+     xlab= "year",
+     ylab="Interest rate (%)",
+     ylim=c(-10,40),
+     main="Policy rule vs Actual FF rate",
+     col = 'green'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_india$year, y=df_all_india$Conventional_policy_4, 
+      type='l',
+      lty=2,
+      col = 'purple',
+      ylim=c(-10,40),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_india$year, y=df_all_india$nominal_interest_rate_india, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,40),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+      legend  =c("Revised Policy rule 4","Conventional policy 4", "Acutual Federal Fund rate"),
+      col=c("green", "purple","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+
+```
+
+
+
+```{r setup, include=FALSE}
+
+#------------------------------------------------------------------------------#
+# Define variables
+#------------------------------------------------------------------------------#
+# Upper bound on a_3 parameter (slope of the IS curve)
+a3.constraint <- -0.0025
+
+# Lower bound on b_2 parameter (slope of the Phillips curve)
+b2.constraint <- 0.025
+
+# Set the start and end dates of the estimation sample (format is c(year,quarter))
+sample.start <- c(1972) 
+sample.end   <- c(2021)
+
+
+
+
+# Set column names for CSV output
+output.col.names <- c("Date","rstar","g","z","output gap","","All results are output from the Stage 3 model.",rep("",8),"Standard Errors","Date","y*","r*","g","","rrgap")
+
+# Set number of iterations for Monte Carlo standard error procedure
+niter <- 5000
+
+# Because the MC standard error procedure is time consuming, we include a run switch
+# Set run.se to TRUE to run the procedure
+run.se <- TRUE
+
+#------------------------------------------------------------------------------#
+# United States: Read in data, run estimation, and save output
+#------------------------------------------------------------------------------#
+# Read in output of prepare.rstar.data.us.R
+
+
+india.log.output             <-  df_macro_india$log_Real_GDP_2016USdollar
+india.inflation              <-  df_macro_india$inflation_rate_india
+india.inflation.expectations <- df_macro_india$Expectated_inflation_rate
+india.nominal.interest.rate  <-  df_macro_india$nominal_interest_rate_india
+india.real.interest.rate     <- india.nominal.interest.rate - india.inflation.expectations
+
+# Run HLW estimation for the US
+india.estimation <- run.hlw.estimation(india.log.output, india.inflation, india.real.interest.rate, india.nominal.interest.rate,
+                                    a3.constraint = a3.constraint, b2.constraint = b2.constraint, run.se = run.se)
+
+# One-sided (filtered) estimates
+one.sided.est.india <- cbind(india.estimation$out.stage3$rstar.filtered,
+                          india.estimation$out.stage3$trend.filtered,
+                          india.estimation$out.stage3$z.filtered,
+                          india.estimation$out.stage3$output.gap.filtered)
+
+
+
+
+```
+
+```{r setup, include=FALSE}
+write.table(one.sided.est.india, 'output/one.sided.est.us.csv', row.names = FALSE, col.names = c("rstar","g","z","output gap"), quote = FALSE, sep = ',', na = ".")
+
+# Save output to CSV
+output.india <- format.output(india.estimation, one.sided.est.inidia, india.real.interest.rate, sample.start, sample.end, run.se = run.se)
+write.table(output.us, '../Monetary_policy/data/india/natural_interest_india.csv', col.names = output.col.names, quote=FALSE, row.names=FALSE, sep = ',', na = '')
+
+```
+
+
+

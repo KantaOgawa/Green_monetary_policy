@@ -1,0 +1,1970 @@
+---
+title: "New_Taylor_rule_US"
+author: "Kanta Ogawa"
+date: "2022-11-22"
+output:
+  html_document:
+    self_contained: false
+---
+From Federal Reserve Bank of Atlanta
+<https://www.atlantafed.org/cqer/research/taylor-rule?panel=2>
+
+\hat{i}_{t} = \rho {i}_{t-1} + (1 - \rho )[(r^{*}_{t} + \pi^{*}_{t}) + 1.5 (\pi_{t} - \pi^{*}_{t}) + \beta x_{t} ]
+
+# inflation measure \pi_{t
+US Infaltion rate: PCE(Personal consumption expenditures)
+
+-The four-quarter inflation rate for the core PCE price index, which excludes food and energy prices, is the default choice in the Taylor Rule Utility chart and heatmap.
+
+However, the main measure is CPI.
+
+
+# inflation target \pi^{*}_{t}
+an annual rate of 2 percent PCE inflation "is most consistent
+-The midpoint of the central tendency of FOMC participants' longer-run PCE inflation projections is another option for the inflation target. These midpoints, included in the Summary of Economic Projections (SEP), were either 1.80 or 1.85 percent prior to 2012.
+
+# Natural interest rate r^{*}_{t}
+ここも変わりそう
+3 types of measures
+varying parameter
+Taylor noted in his paper that his choice was close to the 2.2 percent trend growth rate of real GDP from 1984:Q1 to 1992:Q3 estimated at the time of his writing.
+Recalculate
+
+
+# Resource gap measures: gap
+## US output gap
+<https://fred.stlouisfed.org/graph/?g=f1cZ>
+The output gap is the number of percentage points that real GDP is above or below an estimate of potential
+## Nominal gdp us annual level
+annual level, seasonally adjusted
+<https://fred.stlouisfed.org/series/GDP>
+
+## Real gdp us annual level
+annual level, seasonally adjusted
+<https://fred.stlouisfed.org/series/GDPC1>
+
+
+#Interest-rate smoothing parameter \rho
+0 and 0.85
+
+A smoothing parameter of 0.85 
+
+
+# Weight on the resource gap: \beta
+0.5 and 1
+A very commonly used alternative value, utilized as the default setting for the "Alternative 2" line in the chart, is 1.
+Versions of this rule are often called "Taylor 1999" from a paper by Taylor that considered a rule with this larger weight on the resource gap.
+
+1.5??
+
+
+```{r ibrary, include=FALSE}
+library(dplyr)
+library(tidyverse)
+pacman::p_load(ggplot2, openxlsx,lubridate, bsts)
+
+```
+
+
+
+
+```{r read data, include=FALSE}
+# from <https://www.atlantafed.org/cqer/research/taylor-rule.aspx?panel=2>
+df_ffrate_us <- read.xlsx("../Monetary_policy/data/US/taylor-rule-data.xlsx", sheet=12)
+df_inflation_target_us <-  read.xlsx("../Monetary_policy/data/US/taylor-rule-data.xlsx", sheet=8)
+df_inflation_us <-  read.xlsx("../Monetary_policy/data/US/taylor-rule-data.xlsx", sheet=11)
+df_natural_interest <- read.xlsx("../Monetary_policy/data/US/taylor-rule-data.xlsx", sheet=9)
+df_gdp_gap <- read.xlsx("../Monetary_policy/data/US/taylor-rule-data.xlsx", sheet=10)
+
+# from <https://fred.stlouisfed.org/series/GDP>
+df_nominal_gdp_us <- read_csv("../Monetary_policy/data/US/GDP.csv")
+df_real_gdp_us<- read_csv("../Monetary_policy/data/US/Real_gdp_us.csv")
+#df_nominal_potential_gdp_us <- read_csv("../Monetary_policy/data/Nominal_potential_gdp_us.csv")
+df_core_PCE <- read_csv("../Monetary_policy/data/US/Core_PCE_price_level.csv")
+
+# from <https://ourworldindata.org/co2-emissions>
+df_carbon <- read_csv("../Monetary_policy/data/Annual-co2-emissions-Our_World_in_data.csv")
+```
+
+
+
+```{r plot_actual_data, echo=FALSE}
+
+df_ffrate_us <- df_ffrate_us[-1,] %>% # delte the redandunt row
+  mutate(Quarterly_time=as.Date(X1, origin = "1899-12-30")) %>%
+  rename("Actual_Effective_FF_rate"=Actual.effective.fed.funds.rate,
+         "Effective_FF_rate_lag_one_quarter"=`Effective.fed.funds.rate,.Lagged.1-quarter`)
+
+
+
+plot(x=df_ffrate_us$Quarterly_time, y=df_ffrate_us$Actual_Effective_FF_rate, 
+     type='l', 
+     col = 'darkorange', 
+     main="Actual Effective Federal Fund rate",
+     xlab= "Quarterly Periods",
+     ylab="Actual Effective Federal Fund rate (%)"
+       )
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+  
+```
+```{r Fed_measures, include=FALSE}
+
+df_inflation_us <- df_inflation_us[-1,] %>% # delte the redandunt row
+  mutate(Quarterly_time=as.Date(X1,origin = "1899-12-30")) %>%
+  rename(Core_PCE_inflation_quarter = `Core.PCE.inflation,.4-quarter`)
+
+
+df_inflation_target_us <- df_inflation_target_us[-1,] %>% # delte the redandunt row
+  mutate(Quarterly_time=as.Date(X1,origin = "1899-12-30")) %>%
+  rename(Inflation_target_Two_pct= `2.percent`)
+
+
+df_natural_interest <- df_natural_interest[-1,] %>% # delte the redandunt row
+  mutate(Quarterly_time=as.Date(X1,origin = "1899-12-30")) %>%
+  rename(Natural_interest_Two_pct=`2.percent`,
+         Natural_interest_LW = `Laubach-Williams.model.1-sided.estimate`,
+         Natural_interest_HLW = `Holston-Laubach-Williams.model.1-sided.estimate`
+         )
+df_gdp_gap <-df_gdp_gap[-1,] %>%
+  mutate(Quarterly_time=as.Date(X1,origin = "1899-12-30")) %>%
+  rename(Real_gdp_gap_cbo=`Real.GDP.gap,.CBO` )
+
+
+
+# merge interest data and inflation data
+df_Fed <- left_join(df_ffrate_us, df_inflation_us, by="Quarterly_time")
+df_Fed <- left_join(df_Fed, df_inflation_target_us, by="Quarterly_time") 
+df_Fed <- left_join(df_Fed, df_natural_interest, by="Quarterly_time") 
+df_Fed <- left_join(df_Fed, df_gdp_gap, by="Quarterly_time") %>%
+  select(Quarterly_time, 
+         Actual_Effective_FF_rate, 
+         Effective_FF_rate_lag_one_quarter,
+         Core_PCE_inflation_quarter,
+         Inflation_target_Two_pct,
+         Natural_interest_Two_pct,
+         Natural_interest_LW,
+         Natural_interest_HLW,
+         Real_gdp_gap_cbo)
+  
+  
+```
+
+```{r  core_PCE_price_level, echo=FALSE }
+df_core_PCE <- df_core_PCE %>%
+  mutate(month = format(DATE, "%m")) %>%
+  filter(month == "02"|month =="05"|month=="08"|month =="11") %>%
+  mutate(Quarterly_time = DATE + 14) %>%
+  rename(core_PCE_price_level = PCEPILFE) %>%
+  select(Quarterly_time, core_PCE_price_level)
+  
+
+df_Fed  <- left_join(df_Fed, df_core_PCE, by="Quarterly_time")
+
+```
+
+```{r  GDP, echo=FALSE }
+
+# GDP data
+
+df_nominal_gdp_us <- df_nominal_gdp_us %>%
+  mutate(Quarterly_time = DATE %m+% months(1) + 14) %>%
+  rename(Nominal_GDP_Billions_dollars = GDP)
+
+
+#df_nominal_potential_gdp_us <- df_nominal_potential_gdp_us %>%
+  #mutate(Quarterly_time = DATE %m+% months(1) + 14) %>%
+  #rename(Nominal_potential_GDP_Billions_dollars = NGDPPOT)
+
+
+df_real_gdp_us <- df_real_gdp_us %>%
+  mutate(Quarterly_time = DATE %m+% months(1) + 14) %>%
+  rename(Real_GDP_Billions_dollars_2012 = GDPC1)
+
+df_gdp_total <- left_join(df_real_gdp_us,df_nominal_gdp_us, by="Quarterly_time")
+#df_gdp_total <- full_join(df_gdp_total,df_nominal_potential_gdp_us, by="Quarterly_time") %>%
+  #select(Quarterly_time,Nominal_GDP_Billions_dollars,Nominal_potential_GDP_Billions_dollars,Real_GDP_Billions_dollars_2012)
+
+df_gdp_total <- df_gdp_total %>%
+  mutate(year = format(Quarterly_time, format="%Y"))
+
+df_gdp_total_weight <- df_gdp_total %>%
+  group_by(year)%>%
+  mutate(Real_GDP_Billions_dollars_2012_annual_avg = mean(Real_GDP_Billions_dollars_2012))
+
+df_gdp_total <- df_gdp_total_weight %>%
+  mutate(GDP_weight_annual = Real_GDP_Billions_dollars_2012 / Real_GDP_Billions_dollars_2012_annual_avg)%>%
+  select(Quarterly_time,Nominal_GDP_Billions_dollars,Real_GDP_Billions_dollars_2012, GDP_weight_annual)
+
+
+
+```
+
+```{r carbon, echo=FALSE }
+
+# CO2 emission
+df_carbon <- df_carbon %>%
+  rename("year"=Year,"country_code" = Code, "CO2_t" = `Annual CO2 emissions`)%>%
+  filter(year >= 1960)
+
+df_carbon_cost_usa <- df_carbon %>%
+    filter(country_code == "USA")
+
+## duplication of 2/15
+df_carbon_Feb <- df_carbon_cost_usa %>%
+  mutate(Quarterly_time = as.Date(ISOdate(year, 1,1)) %m+% months(1) + 14) %>%
+  select(country_code, Quarterly_time, CO2_t)
+
+
+## duplicate 5/15
+df_carbon_May <- df_carbon_cost_usa %>%
+  mutate(Quarterly_time =as.Date(ISOdate(year, 1,1)) %m+% months(4) + 14) %>%
+  select(country_code, Quarterly_time, CO2_t)
+
+## duplicate 8/15
+df_carbon_Aug <- df_carbon_cost_usa %>%
+  mutate(Quarterly_time = as.Date(ISOdate(year, 1,1))%m+% months(7) + 14) %>%
+  select(country_code, Quarterly_time, CO2_t)
+
+## duplicate 11/15
+df_carbon_Nov <- df_carbon_cost_usa %>%
+  mutate(Quarterly_time = as.Date(ISOdate(year, 1,1))%m+% months(10) + 14) %>%
+  select(country_code, Quarterly_time, CO2_t)
+
+df_carbon_quarterly <- rbind(df_carbon_Feb, df_carbon_May, df_carbon_Aug,df_carbon_Nov) 
+
+plot(x=df_carbon_quarterly$Quarterly_time, y=df_carbon_quarterly$CO2_t, 
+     type='l', 
+     col = 'darkorange', 
+     main="CO2 emission (t)",
+     xlab= "Quarterly Periods",
+     ylab="CO2 emission (t)"
+       )
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+```
+
+From DICE model
+
+# Base parametes
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 31.21 2010 international US dollars / tCO2
+
+```{r carbon_price_creation_base, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_base <- rev(GeometricSequence(56*4, initial.value = 31.21/((1.03)^(1/4)), discount.factor = 1/(1.03^(1/4))) )
+pre_2015_base <- rev(seq(as.Date("2015-02-15"), length = length(vec_pre_2015_base), by = "-1 quarter")) # not include 2015/05/15
+
+
+
+vec_post_2015_base <- GeometricSequence(8*4, initial.value = 31.21, discount.factor = 1.03^(1/4)) 
+post_2015_base <- seq(as.Date("2015-05-15"), length = length(vec_post_2015_base), by = "quarter") #  include 2015/05/15
+
+# check length
+length(c(vec_pre_2015_base, vec_post_2015_base))
+length(c(pre_2015_base, post_2015_base))
+
+# combined vec
+Carbon_price_2010_dollar_base<- c(vec_pre_2015_base, vec_post_2015_base)
+Quarterly_time <- c(pre_2015_base, post_2015_base)
+df_carbon_price_usa_base <- data.frame(Quarterly_time, Carbon_price_2010_dollar_base) 
+ggplot(data=df_carbon_price_usa_base, aes(x=Quarterly_time, y=Carbon_price_2010_dollar_base) )  +geom_line()
+```
+
+
+# 2.5 degree maximum - Maimum
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 184.4 2010 international US dollars / tCO2
+
+```{r carbon_price_creation_max_max, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_max_max <- rev(GeometricSequence(56*4, initial.value = 184.4/((1.03)^(1/4)), discount.factor = 1/(1.03^(1/4))) )
+pre_2015_max_max <- rev(seq(as.Date("2015-02-15"), length = length(vec_pre_2015_max_max), by = "-1 quarter")) # not include 2015/05/15
+
+
+
+vec_post_2015_max_max <- GeometricSequence(8*4, initial.value = 184.4, discount.factor = 1.03^(1/4)) 
+post_2015_max_max <- seq(as.Date("2015-05-15"), length = length(vec_post_2015_max_max), by = "quarter") #  include 2015/05/15
+
+# check length
+length(c(vec_pre_2015_max_max, vec_post_2015_max_max))
+length(c(pre_2015_max_max, post_2015_max_max))
+
+# combined vec
+Carbon_price_2010_dollar_base_max_max <- c(vec_pre_2015_max_max, vec_post_2015_max_max)
+Quarterly_time <- c(pre_2015_max_max, post_2015_max_max)
+df_carbon_price_usa_max_max <- data.frame(Quarterly_time, Carbon_price_2010_dollar_base_max_max) 
+ggplot(data=df_carbon_price_usa_max_max, aes(x=Quarterly_time, y=Carbon_price_2010_dollar_base_max_max) )  +geom_line()
+```
+# 2.5 degree maximum - max_100y
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 106.7 2010 international US dollars / tCO2
+
+```{r carbon_price_creation_max_100y, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_max_100y <- rev(GeometricSequence(56*4, initial.value = 106.7/((1.03)^(1/4)), discount.factor = 1/(1.03^(1/4))) )
+pre_2015_max_100y <- rev(seq(as.Date("2015-02-15"), length = length(vec_pre_2015_max_100y), by = "-1 quarter")) # not include 2015/05/15
+
+
+
+vec_post_2015_max_100y <- GeometricSequence(8*4, initial.value = 106.7, discount.factor = 1.03^(1/4)) 
+post_2015_max_100y <- seq(as.Date("2015-05-15"), length = length(vec_post_2015_max_100y), by = "quarter") #  include 2015/05/15
+
+# check length
+length(c(vec_pre_2015_max_100y, vec_post_2015_max_100y))
+length(c(pre_2015_max_100y, post_2015_max_100y))
+
+# combined vec
+Carbon_price_2010_dollar_base_max_100y <- c(vec_pre_2015_max_100y, vec_post_2015_max_100y)
+Quarterly_time <- c(pre_2015_max_100y, post_2015_max_100y)
+df_carbon_price_usa_max_100y <- data.frame(Quarterly_time, Carbon_price_2010_dollar_base_max_100y) 
+ggplot(data=df_carbon_price_usa_max_100y, aes(x=Quarterly_time, y=Carbon_price_2010_dollar_base_max_100y) )  + geom_line()
+
+```
+
+
+```{r data_bind_Fed, echo=FALSE}
+df_Fed <- df_Fed %>%
+  mutate(core_PCE_price_level_base_2010 = core_PCE_price_level / df_Fed[df_Fed$Quarterly_time == "2010-05-15","core_PCE_price_level"],# Carbon price is based on 2010 international US dollar
+         Real_gdp_gap_cbo=as.numeric(Real_gdp_gap_cbo),
+         core_PCE_price_level_base_2012 = core_PCE_price_level / df_Fed[df_Fed$Quarterly_time == "2012-05-15","core_PCE_price_level"])# Carbon price is based on 2012 international US dollar
+
+df_all_usa <- full_join(df_Fed,df_carbon_quarterly, by="Quarterly_time") 
+
+df_all_usa <- full_join(df_carbon_price_usa_base,df_all_usa, by="Quarterly_time") 
+
+df_all_usa <- full_join(df_carbon_price_usa_max_max,df_all_usa, by="Quarterly_time") 
+
+df_all_usa <- full_join(df_carbon_price_usa_max_100y, df_all_usa, by="Quarterly_time") 
+
+df_all_usa <- left_join(df_all_usa,df_gdp_total, by="Quarterly_time")  %>%
+   mutate(CO2_t_gdp_wighted = CO2_t*GDP_weight_annual) %>% ###### revise the CO2 emission
+   mutate(Potential_gdp_Billions_dollars_2012 = Real_GDP_Billions_dollars_2012/(1 + (Real_gdp_gap_cbo)/100),
+          Price_2012 = Nominal_GDP_Billions_dollars / Real_GDP_Billions_dollars_2012) %>%
+   mutate(Nominal_potential_gdp_Billions_dollars =  Price_2012 * Potential_gdp_Billions_dollars_2012)
+
+
+```
+
+# base parametes
+
+```{r data_bind_base, echo=FALSE}
+
+df_all_usa_base <- df_all_usa %>%
+  mutate(Nominal_carbon_price_base = core_PCE_price_level_base_2010*Carbon_price_2010_dollar_base) %>%
+  mutate(Nominal_total_carbon_cost_Billions_dollars_base = (Nominal_carbon_price_base * CO2_t_gdp_wighted) / 10^9) %>%
+  mutate(Nominal_caron_cost_over_Nominal_GDP_pct_base = (Nominal_total_carbon_cost_Billions_dollars_base / Nominal_GDP_Billions_dollars) * 100) %>%
+  mutate(Optimal_price_2012_base = (Nominal_GDP_Billions_dollars + Nominal_total_carbon_cost_Billions_dollars_base)/Real_GDP_Billions_dollars_2012) %>%
+  mutate(Optimal_real_GDP_Billions_dollars_2012_base =  Nominal_potential_gdp_Billions_dollars/ Optimal_price_2012_base ) %>%
+  mutate(Revised_output_gap_pct = ((Real_GDP_Billions_dollars_2012  - Optimal_real_GDP_Billions_dollars_2012_base)/ Optimal_real_GDP_Billions_dollars_2012_base) *100) %>%
+  mutate(Optimal_price_2012_base_1past = lag(Optimal_price_2012_base,n=1)) %>%
+  mutate(Price_gap = ((Optimal_price_2012_base - Price_2012)/Price_2012)*100)
+
+
+
+
+
+```
+
+
+
+
+
+```{r data_compare_base, echo=FALSE}
+
+#df_all_usa <- df_all_usa %>%
+  #mutate(Optimal_core_PCE_price_level_base_2016 = Optimal_core_PCE_price_level_base_2012 / df_all_usa[df_all_usa$Quarterly_time == "2015-05-15","Optimal_core_PCE_price_level_base_2012"] )
+
+#plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Nominal_caron_cost_over_Nominal_GDP_pct_base, 
+     #type='l', 
+     #col = 'blue', 
+     #main="Nominal caron cost vs _Nominal_GDP (%)",
+     #xlab= "Quarterly Periods",
+     #ylab="Nominal caron cost vs _Nominal_GDP (%)"
+       #)
+
+#grid(nx = NULL,
+    # ny = NULL,
+     #lty = 2, col = "gray")
+
+
+
+
+## Compare price level
+
+g_price_level_compare_base  <- ggplot(data=df_all_usa_base, aes(x=Quarterly_time, y=Optimal_price_2012_base, color="Optimal  price level base 2012") )  + geom_line() + ylim(0,1.2) + xlab("Quarterly Periods") + ylab("price level based 2012")
+
+g_price_level_compare_base <- g_price_level_compare_base +geom_line(data=df_all_usa_base, aes(x=Quarterly_time, y=Price_2012, color="price level base 2012") )
+print(g_price_level_compare_base)
+
+
+## Compare GDP
+g_gdp_compare_base  <- ggplot(data=df_all_usa_base, aes(x=Quarterly_time, y=Optimal_real_GDP_Billions_dollars_2012_base, color="Optimal real GDP Billions of dollars 2012") )  +geom_line() + xlab("Quarterly Periods") + ylab("Billions of dollars based on 2012")
+
+g_gdp_compare_base <- g_gdp_compare_base +geom_line(data=df_all_usa_base, aes(x=Quarterly_time, y=Real_GDP_Billions_dollars_2012, color="Real GDP Billions of dollars 2012") )
+print(g_gdp_compare_base)
+
+## Compare log GDP
+
+g_log_gdp_compare_base  <- ggplot(data=df_all_usa_base, aes(x=Quarterly_time, y=log(Optimal_real_GDP_Billions_dollars_2012_base), color="log Optimal real GDP Billions of dollars 2012") )  + geom_line()  + xlab("Quarterly Periods") 
+
+
+g_log_gdp_compare_base <- g_log_gdp_compare_base + geom_line(data=df_all_usa_base, aes(x=Quarterly_time, y=log(Real_GDP_Billions_dollars_2012), color="log Real GDP Billions of dollars 2012") )
+print(g_log_gdp_compare_base)
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Revised_output_gap_pct, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Conventional Real Output gap of CBO",
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)",
+     ylim=c(-10,20)
+       )
+
+  
+
+lines(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Real_gdp_gap_cbo, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="")
+
+
+
+legend("topright",
+      legend  =c("Revised Real Output gap(%)","Conventional Real Output gap of CBO%()"),
+      col=c("red", "black"),
+      lwd=2,
+      lty=c(1,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+# to correct the deviation
+
+```{r inflation_target_1-1, echo=FALSE}
+# plot the inflation rate
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Price_gap, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="Price gap (%)"
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+
+
+# steady staetのinflation targetを計算
+
+#0.0268 % のインフレは正当化できる
+
+```{r inflation_target_1-2, echo=FALSE}
+
+df_all_usa_base <- df_all_usa_base %>%
+  mutate(Carbon_price_2012_dollar_base = Carbon_price_2010_dollar_base/ df_all_usa_base[df_all_usa_base$Quarterly_time == "2012-05-15","core_PCE_price_level_base_2010"]) %>%
+  mutate(portion = (((Carbon_price_2012_dollar_base * CO2_t_gdp_wighted)/(10^9)) /Real_GDP_Billions_dollars_2012) *100)
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$portion, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="portion (%)"
+       )
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+# approximately 0.90 %
+
+
+
+(1+ 1.03*0.009)/1.009
+
+```
+
+
+\hat{i}_{t} = \rho {i}_{t-1} + (1 - \rho )[(r^{*}_{t} + \pi^{*}_{t}) + 1.5 (\pi_{t} - \pi^{*}_{t}) + \beta x_{t} ]
+mutate(Policy_rule_1 = 0.85 *Effective_FF_rate_lag_one_quarter  + (1 - 0.85 )*((Natural_interest_Two_pct + Inflation_target_Two_pct) + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct) + Revised_output_gap) )
+
+```{r Taylor_rule_base_1-1, echo=FALSE}
+
+df_all_usa_base <- df_all_usa_base %>%
+  mutate(Effective_FF_rate_lag_one_quarter = as.numeric(Effective_FF_rate_lag_one_quarter),
+         Inflation_target_Two_pct = as.numeric(Inflation_target_Two_pct),
+         Inflation_target_Two_pct_plus = as.numeric(Inflation_target_Two_pct) + 0.0268,
+         Core_PCE_inflation_quarter = as.numeric(Core_PCE_inflation_quarter),
+         Natural_interest_LW = as.numeric(Natural_interest_LW),
+         Natural_interest_HLW = as.numeric(Natural_interest_HLW),
+         Real_gdp_gap_cbo = as.numeric(Real_gdp_gap_cbo)
+         )
+
+
+df_all_usa_base <- df_all_usa_base %>%
+  mutate(Revised_output_gap_pct_lead1 = lead(Revised_output_gap_pct,n=1),
+         Real_gdp_gap_cbo_lead1 = lead(Real_gdp_gap_cbo, n=1)) %>%
+  mutate(Natural_interest_LW_revised_base = Natural_interest_LW + (Revised_output_gap_pct_lead1 - Real_gdp_gap_cbo_lead1) - (Revised_output_gap_pct - Real_gdp_gap_cbo)) %>%
+  mutate(Natural_interest_HLW_revised_base = Natural_interest_HLW + (Revised_output_gap_pct_lead1 - Real_gdp_gap_cbo_lead1) - (Revised_output_gap_pct - Real_gdp_gap_cbo))
+  
+  
+
+
+df_all_usa_base　<- df_all_usa_base %>%
+  drop_na(c(Effective_FF_rate_lag_one_quarter, 
+            Core_PCE_inflation_quarter,
+            Real_gdp_gap_cbo,
+            Actual_Effective_FF_rate,
+            Natural_interest_HLW,
+            Revised_output_gap_pct,
+            Natural_interest_LW,
+            Natural_interest_LW_revised_base,
+            Natural_interest_HLW_revised_base
+            )
+          )
+
+
+
+
+# initial condition for Revised poly rule 1
+
+df_all_usa_base[2, "Revised_Policy_rule_1_lag"] <- df_all_usa_base[1, "Effective_FF_rate_lag_one_quarter"]# initial condition
+
+
+# initial condition for Conventional poly rule 1
+
+df_all_usa_base[2, "Conventional_policy_1_lag"] <- df_all_usa_base[1, "Effective_FF_rate_lag_one_quarter"]
+
+# initial condition for Revised poly rule 3
+
+df_all_usa_base[2, "Revised_Policy_rule_3_lag"] <- df_all_usa_base[1, "Effective_FF_rate_lag_one_quarter"]
+
+
+# initial condition for Conventional poly rule 3
+
+df_all_usa_base[2, "Conventional_policy_3_lag"] <- df_all_usa_base[1, "Effective_FF_rate_lag_one_quarter"]
+
+
+for (j in 2:dim(df_all_usa_base)[1]){
+  
+  df_all_usa_base_j <- df_all_usa_base[j,]
+  
+  
+  
+  # Rebised policy rule 1 HLW
+  
+  df_all_usa_base_j <- df_all_usa_base_j %>%
+    mutate(
+    Revised_Policy_rule_1 = 0.85 *Revised_Policy_rule_1_lag
+         + (1 - 0.85 )*((Natural_interest_HLW_revised_base  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct)
+    )
+  
+  df_all_usa_base[j, "Revised_Policy_rule_1"] <- df_all_usa_base_j[1, "Revised_Policy_rule_1"]
+  df_all_usa_base[j+1, "Revised_Policy_rule_1_lag"] <- df_all_usa_base_j[1, "Revised_Policy_rule_1"]
+  
+  
+  # Conventional policy rule 1 HLW
+  
+  df_all_usa_base_j <- df_all_usa_base_j %>%
+    mutate(
+    Conventional_policy_1 = 0.85 *Conventional_policy_1_lag
+         + (1 - 0.85 )*((Natural_interest_HLW + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Real_gdp_gap_cbo)
+    )
+  
+  df_all_usa_base[j, "Conventional_policy_1"] <- df_all_usa_base_j[1, "Conventional_policy_1"]
+  df_all_usa_base[j+1, "Conventional_policy_1_lag"] <- df_all_usa_base_j[1, "Conventional_policy_1"]
+  
+  
+  # Rebised policy rule 3 LW
+  
+  
+  df_all_usa_base_j <- df_all_usa_base_j %>%
+    mutate(
+    Revised_Policy_rule_3 = 0.85 *Revised_Policy_rule_3_lag
+         + (1 - 0.85 )*((Natural_interest_LW_revised_base + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct)
+    )
+  
+  df_all_usa_base[j, "Revised_Policy_rule_3"] <- df_all_usa_base_j[1, "Revised_Policy_rule_3"]
+  df_all_usa_base[j+1, "Revised_Policy_rule_3_lag"] <- df_all_usa_base_j[1, "Revised_Policy_rule_3"]
+  
+  
+  
+  # Conventional  policy rule 3 LW
+  
+  df_all_usa_base_j <- df_all_usa_base_j %>%
+    mutate(
+    Conventional_policy_3 = 0.85 *Conventional_policy_3_lag
+         + (1 - 0.85 )*((Natural_interest_LW  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Real_gdp_gap_cbo)
+    )
+  
+  df_all_usa_base[j, "Conventional_policy_3"] <- df_all_usa_base_j[1, "Conventional_policy_3"]
+  df_all_usa_base[j+1, "Conventional_policy_3_lag"] <- df_all_usa_base_j[1, "Conventional_policy_3"]
+  
+}
+  
+
+
+
+df_all_usa_base <- df_all_usa_base %>%
+  rowwise() %>%
+  mutate(
+    Revised_Policy_rule_2 = ((Natural_interest_HLW_revised_base + Inflation_target_Two_pct_plus) 
+                                  + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct),
+         Conventional_policy_2 = ((Natural_interest_HLW  + Inflation_target_Two_pct) + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct) + Real_gdp_gap_cbo),
+    Policy_rule_gap_1 = Revised_Policy_rule_1 -  Conventional_policy_1,
+    Policy_rule_gap_2 = Revised_Policy_rule_2 -  Conventional_policy_2,
+    Policy_rule_gap_3 = Revised_Policy_rule_3 -  Conventional_policy_3,
+    
+         ) 
+
+```  
+
+
+
+```{r Taylor_rule_plot_base_1-1, echo=FALSE}
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Revised_Policy_rule_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,20),
+     main="Taylor rule vs Actual FF rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Conventional_policy_1, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Actual_Effective_FF_rate, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+      legend  =c("Green Taylor rule 1","Classic Taylor rule 1", "Acutual Federal Fund rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      box.lwd = 0,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+```
+
+```{r plot_gap_base_1-1}
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Policy_rule_gap_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,1.5),
+     main="Revised policy rule 1 - Conventional policy rule 1",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+```
+
+
+
+```{r Taylor_rule_plot_base_1-2, echo=FALSE}
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Revised_Policy_rule_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,20),
+     main="Taylor rule vs Actual FF rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Conventional_policy_2, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Actual_Effective_FF_rate, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 2","Classic Taylor rule 2", "Acutual Federal Fund rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+```
+
+
+```{r plot_gap_1-2, echo=FALSE}
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Policy_rule_gap_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,1.5),
+     main="Revised policy rule 2 - Conventional policy rule 2",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+```
+ 
+ 
+     
+
+# 2.5 degree maximum - Maimum
+## hard cap senario
+
+
+```{r data_bind_max_max, echo=FALSE}
+
+df_all_usa_max_max <- df_all_usa %>%
+  mutate(Nominal_carbon_price_max_max = core_PCE_price_level_base_2010*Carbon_price_2010_dollar_base_max_max) %>%
+  mutate(Nominal_total_carbon_cost_Billions_dollars_max_max = (Nominal_carbon_price_max_max * CO2_t_gdp_wighted) / 10^9) %>%
+  mutate(Nominal_caron_cost_over_Nominal_GDP_pct_max_max = (Nominal_total_carbon_cost_Billions_dollars_max_max / Nominal_GDP_Billions_dollars) * 100) %>%
+  mutate(Optimal_price_2012_max_max = (Nominal_GDP_Billions_dollars + Nominal_total_carbon_cost_Billions_dollars_max_max)/Real_GDP_Billions_dollars_2012) %>%
+  mutate(Optimal_real_GDP_Billions_dollars_2012_max_max =  Nominal_potential_gdp_Billions_dollars/ Optimal_price_2012_max_max ) %>%
+  mutate(Revised_output_gap_pct_max_max = ((Real_GDP_Billions_dollars_2012  - Optimal_real_GDP_Billions_dollars_2012_max_max)/ Optimal_real_GDP_Billions_dollars_2012_max_max) *100) %>%
+  mutate(Optimal_price_2012_max_max_1past = lag(Optimal_price_2012_max_max,n=1)) %>%
+  mutate(Price_gap_max_max = ((Optimal_price_2012_max_max - Price_2012)/Price_2012)*100)
+
+
+
+
+
+```
+
+
+
+
+```{r compare_data_max_max, echo=FALSE}
+## Compare price level
+
+g_price_level_compare_max_max <- ggplot(data=df_all_usa_max_max, aes(x=Quarterly_time, y=Optimal_price_2012_max_max, color="Optimal  price level base 2012") )  + geom_line() + ylim(0,1.2) + xlab("Quarterly Periods") + ylab("price level based 2012")
+
+g_price_level_compare_max_max <- g_price_level_compare_max_max +geom_line(data=df_all_usa_max_max, aes(x=Quarterly_time, y=Price_2012, color="price level based 2012") )
+print(g_price_level_compare_max_max)
+
+
+## Compare GDP
+g_gdp_compare_max_max  <- ggplot(data=df_all_usa_max_max, aes(x=Quarterly_time, y=Optimal_real_GDP_Billions_dollars_2012_max_max, color="Optimal real GDP Billions of dollars 2012") )  +geom_line() + xlab("Quarterly Periods") + ylab("Billions of dollars based on 2012")
+
+g_gdp_compare_max_max <- g_gdp_compare_max_max +geom_line(data=df_all_usa_max_max, aes(x=Quarterly_time, y=Real_GDP_Billions_dollars_2012, color="Real GDP Billions of dollars 2012") )
+print(g_gdp_compare_max_max)
+
+## Compare log GDP
+
+g_log_gdp_compare_max_max  <- ggplot(data=df_all_usa_max_max, aes(x=Quarterly_time, y=log(Optimal_real_GDP_Billions_dollars_2012_max_max), color="log Optimal real GDP Billions of dollars 2012") )  + geom_line()  + xlab("Quarterly Periods") 
+
+
+g_log_gdp_compare_max_max <- g_log_gdp_compare_max_max + geom_line(data=df_all_usa_max_max, aes(x=Quarterly_time, y=log(Real_GDP_Billions_dollars_2012), color="log Real GDP Billions of dollars 2012") )
+print(g_log_gdp_compare_max_max)
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Revised_output_gap_pct_max_max, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Conventional Real Output gap of CBO",
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)",
+     ylim=c(-20,20)
+       )
+
+  
+
+lines(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Real_gdp_gap_cbo, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-20,20),
+      xlab="",
+      ylab="")
+
+
+
+legend("topright",
+      legend  =c("Revised Real Output gap(%)","Conventional Real Output gap of CBO%()"),
+      col=c("red", "black"),
+      lwd=2,
+      lty=c(1,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+# to correct the deviation: 6%
+
+```{r inflation_target_max_max, echo=FALSE}
+# plot the inflation rate
+
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Price_gap_max_max, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="Price gap (%)"
+       )
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+```
+
+
+# steady staetのinflation targetを計算
+
+#0.1564 % のインフレは正当化できる
+
+```{r inflation_target_max_max_2-1, echo=FALSE}
+
+df_all_usa_max_max <- df_all_usa_max_max %>%
+  mutate(Carbon_price_2012_dollar_max_max = Carbon_price_2010_dollar_base_max_max/ df_all_usa_max_max[df_all_usa_max_max$Quarterly_time == "2012-05-15","core_PCE_price_level_base_2010"]) %>%
+  mutate(portion_max_max = (((Carbon_price_2012_dollar_max_max * CO2_t_gdp_wighted)/(10^9)) /Real_GDP_Billions_dollars_2012) *100)
+
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$portion_max_max, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="portion (%)"
+       )
+
+
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+# approximately 5.5 %
+
+
+
+(0.055/1.055)*0.03
+
+```
+
+
+```{r Taylor_rule_max_max_2-1, echo=FALSE}
+df_all_usa_max_max <- df_all_usa_max_max %>%
+  mutate(Effective_FF_rate_lag_one_quarter = as.numeric(Effective_FF_rate_lag_one_quarter),
+         Inflation_target_Two_pct = as.numeric(Inflation_target_Two_pct),
+         Inflation_target_Two_pct_plus = as.numeric(Inflation_target_Two_pct) + 0.1564,
+         Core_PCE_inflation_quarter = as.numeric(Core_PCE_inflation_quarter),
+         Natural_interest_LW = as.numeric(Natural_interest_LW),
+         Natural_interest_HLW = as.numeric(Natural_interest_HLW),
+         Real_gdp_gap_cbo = as.numeric(Real_gdp_gap_cbo)
+         ) 
+
+
+df_all_usa_max_max <- df_all_usa_max_max %>%
+  mutate(Revised_output_gap_pct_max_max_lead1 = lead(Revised_output_gap_pct_max_max,n=1),
+         Real_gdp_gap_cbo_lead1 = lead(Real_gdp_gap_cbo, n=1)) %>%
+  mutate(Natural_interest_LW_revised_max_max = Natural_interest_LW + (Revised_output_gap_pct_max_max_lead1 - Real_gdp_gap_cbo_lead1) - (Revised_output_gap_pct_max_max - Real_gdp_gap_cbo)) %>%
+  mutate(Natural_interest_HLW_revised_max_max = Natural_interest_HLW + (Revised_output_gap_pct_max_max_lead1 - Real_gdp_gap_cbo_lead1) - (Revised_output_gap_pct_max_max - Real_gdp_gap_cbo))
+  
+   
+
+
+df_all_usa_max_max　<- df_all_usa_max_max %>%
+  drop_na(c(Effective_FF_rate_lag_one_quarter, 
+            Core_PCE_inflation_quarter,
+            Real_gdp_gap_cbo,
+            Actual_Effective_FF_rate,
+            Natural_interest_HLW,
+            Revised_output_gap_pct_max_max,
+            Natural_interest_LW,
+            Natural_interest_LW_revised_max_max,
+            Natural_interest_HLW_revised_max_max
+            )
+          )
+
+
+# initial condition for Revised poly rule 1
+
+df_all_usa_max_max[2, "Revised_Policy_rule_1_lag"] <- df_all_usa_max_max[1, "Effective_FF_rate_lag_one_quarter"]# initial condition
+
+
+# initial condition for Conventional poly rule 1
+
+df_all_usa_max_max[2, "Conventional_policy_1_lag"] <- df_all_usa_max_max[1, "Effective_FF_rate_lag_one_quarter"]
+
+# initial condition for Revised poly rule 3
+
+df_all_usa_max_max[2, "Revised_Policy_rule_3_lag"] <- df_all_usa_max_max[1, "Effective_FF_rate_lag_one_quarter"]
+
+
+# initial condition for Conventional poly rule 3
+
+df_all_usa_max_max[2, "Conventional_policy_3_lag"] <- df_all_usa_max_max[1, "Effective_FF_rate_lag_one_quarter"]
+
+
+for (j in 2:dim(df_all_usa_max_max)[1]){
+  
+  df_all_usa_max_max_j <- df_all_usa_max_max[j,]
+  
+  
+  
+  # Rebised policy rule 1 HLW
+  
+  df_all_usa_max_max_j <- df_all_usa_max_max_j %>%
+    mutate(
+    Revised_Policy_rule_1 = 0.85 *Revised_Policy_rule_1_lag
+         + (1 - 0.85 )*((Natural_interest_HLW_revised_max_max + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct_max_max)
+    )
+  
+  df_all_usa_max_max[j, "Revised_Policy_rule_1"] <- df_all_usa_max_max_j[1, "Revised_Policy_rule_1"]
+  df_all_usa_max_max[j+1, "Revised_Policy_rule_1_lag"] <- df_all_usa_max_max_j[1, "Revised_Policy_rule_1"]
+  
+  
+  # Conventional policy rule 1 HLW
+  
+  df_all_usa_max_max_j <- df_all_usa_max_max_j %>%
+    mutate(
+    Conventional_policy_1 = 0.85 *Conventional_policy_1_lag
+         + (1 - 0.85 )*((Natural_interest_HLW  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Real_gdp_gap_cbo)
+    )
+  
+  df_all_usa_max_max[j, "Conventional_policy_1"] <- df_all_usa_max_max_j[1, "Conventional_policy_1"]
+  df_all_usa_max_max[j+1, "Conventional_policy_1_lag"] <- df_all_usa_max_max_j[1, "Conventional_policy_1"]
+  
+  
+  # Revised policy rule 3 LW
+  
+  
+  df_all_usa_max_max_j <- df_all_usa_max_max_j %>%
+    mutate(
+    Revised_Policy_rule_3 = 0.85 *Revised_Policy_rule_3_lag
+         + (1 - 0.85 )*((Natural_interest_LW_revised_max_max  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct_max_max)
+    )
+  
+  df_all_usa_max_max[j, "Revised_Policy_rule_3"] <- df_all_usa_max_max_j[1, "Revised_Policy_rule_3"]
+  df_all_usa_max_max[j+1, "Revised_Policy_rule_3_lag"] <- df_all_usa_max_max_j[1, "Revised_Policy_rule_3"]
+  
+  
+  
+  # Conventional  policy rule 3 LW
+  
+  df_all_usa_max_max_j <- df_all_usa_max_max_j %>%
+    mutate(
+    Conventional_policy_3 = 0.85 *Conventional_policy_3_lag
+         + (1 - 0.85 )*((Natural_interest_LW  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Real_gdp_gap_cbo)
+    )
+  
+  df_all_usa_max_max[j, "Conventional_policy_3"] <- df_all_usa_max_max_j[1, "Conventional_policy_3"]
+  df_all_usa_max_max[j+1, "Conventional_policy_3_lag"] <- df_all_usa_max_max_j[1, "Conventional_policy_3"]
+  
+}
+  
+
+
+
+df_all_usa_max_max <- df_all_usa_max_max %>%
+  rowwise() %>%
+  mutate(
+    Revised_Policy_rule_2 = ((Natural_interest_HLW_revised_max_max + Inflation_target_Two_pct_plus) 
+                                  + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct_max_max),
+         Conventional_policy_2 = ((Natural_interest_HLW  + Inflation_target_Two_pct) + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct) + Real_gdp_gap_cbo),
+    Policy_rule_gap_1 = Revised_Policy_rule_1 -  Conventional_policy_1,
+    Policy_rule_gap_2 = Revised_Policy_rule_2 -  Conventional_policy_2,
+    Policy_rule_gap_3 = Revised_Policy_rule_3 -  Conventional_policy_3
+         ) 
+```  
+
+
+
+
+```{r Taylor_rule_plot_max_max_2-1, echo=FALSE }
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Revised_Policy_rule_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,20),
+     main="Taylor rule vs Actual FF rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Conventional_policy_1, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Actual_Effective_FF_rate, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 1","Classic Taylor rule 1", "Acutual Federal Fund rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+```
+
+
+
+```{r plot_gap_max_max_2-1, echo=FALSE}
+
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Policy_rule_gap_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,10),
+     main="Revised policy rule 1 - Conventional policy rule 1",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+     
+```  
+
+```{r Taylor_rule_plot_max_max_2-2, echo=FALSE}
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Revised_Policy_rule_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,20),
+     main="Taylor rule vs Actual FF rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Conventional_policy_2, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Actual_Effective_FF_rate, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 2","Classic Taylor rule 2", "Acutual Federal Fund rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+
+
+```{r  plot_gap_max_max_2-2, echo=FALSE}
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Policy_rule_gap_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,10),
+     main="Revised policy rule 2 - Conventional policy rule 2",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+```
+
+# 2.5 degree maximum - max_100y
+
+
+
+
+```{r data_bind_max_100y, echo=FALSE}
+
+df_all_usa_max_100y <- df_all_usa %>%
+  mutate(Nominal_carbon_price_max_100y = core_PCE_price_level_base_2010*Carbon_price_2010_dollar_base_max_100y) %>%
+  mutate(Nominal_total_carbon_cost_Billions_dollars_max_100y = (Nominal_carbon_price_max_100y * CO2_t_gdp_wighted) / 10^9) %>%
+  mutate(Nominal_caron_cost_over_Nominal_GDP_pct_max_100y = (Nominal_total_carbon_cost_Billions_dollars_max_100y / Nominal_GDP_Billions_dollars) * 100) %>%
+  mutate(Optimal_price_2012_max_100y = (Nominal_GDP_Billions_dollars + Nominal_total_carbon_cost_Billions_dollars_max_100y)/Real_GDP_Billions_dollars_2012) %>%
+  mutate(Optimal_real_GDP_Billions_dollars_2012_max_100y =  Nominal_potential_gdp_Billions_dollars/ Optimal_price_2012_max_100y ) %>%
+  mutate(Revised_output_gap_pct_max_100y = ((Real_GDP_Billions_dollars_2012  - Optimal_real_GDP_Billions_dollars_2012_max_100y)/ Optimal_real_GDP_Billions_dollars_2012_max_100y) *100) %>%
+  mutate(Optimal_price_2012_max_100y_1past = lag(Optimal_price_2012_max_100y,n=1)) %>%
+  mutate(Price_gap_max_100y = ((Optimal_price_2012_max_100y - Price_2012)/Price_2012)*100)
+  
+
+
+
+
+
+```
+
+
+
+
+
+```{r compare_data_max_100y, echo=FALSE}
+## Compare price level
+
+g_price_level_compare_max_100y <- ggplot(data=df_all_usa_max_100y, aes(x=Quarterly_time, y=Optimal_price_2012_max_100y, color="Optimal  price level base 2012") )  + geom_line() + ylim(0,1.2) + xlab("Quarterly Periods") + ylab("price level based 2012")
+
+g_price_level_compare_max_100y <- g_price_level_compare_max_100y +geom_line(data=df_all_usa_max_100y, aes(x=Quarterly_time, y=Price_2012, color="price level based 2012") )
+print(g_price_level_compare_max_100y)
+
+
+## Compare GDP
+g_gdp_compare_max_100y  <- ggplot(data=df_all_usa_max_100y, aes(x=Quarterly_time, y=Optimal_real_GDP_Billions_dollars_2012_max_100y, color="Optimal real GDP Billions of dollars 2012") )  +geom_line() + xlab("Quarterly Periods") + ylab("Billions of dollars based on 2012")
+
+g_gdp_compare_max_100y <- g_gdp_compare_max_100y +geom_line(data=df_all_usa_max_100y, aes(x=Quarterly_time, y=Real_GDP_Billions_dollars_2012, color="Real GDP Billions of dollars 2012") )
+print(g_gdp_compare_max_100y)
+
+## Compare log GDP
+
+g_log_gdp_compare_max_100y  <- ggplot(data=df_all_usa_max_100y, aes(x=Quarterly_time, y=log(Optimal_real_GDP_Billions_dollars_2012_max_100y), color="log Optimal real GDP Billions of dollars 2012") )  + geom_line()  + xlab("Quarterly Periods") 
+
+
+g_log_gdp_compare_max_100y <- g_log_gdp_compare_max_100y + geom_line(data=df_all_usa_max_100y, aes(x=Quarterly_time, y=log(Real_GDP_Billions_dollars_2012), color="log Real GDP Billions of dollars 2012") )
+print(g_log_gdp_compare_max_100y)
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Revised_output_gap_pct_max_100y, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Conventional Real Output gap of CBO",
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)",
+     ylim=c(-20,20)
+       )
+
+  
+
+lines(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Real_gdp_gap_cbo, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-20,20),
+      xlab="",
+      ylab="")
+
+
+
+legend("topright",
+      legend  =c("Revised Real Output gap(%)","Conventional Real Output gap of CBO%()"),
+      col=c("red", "black"),
+      lwd=2,
+      lty=c(1,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+# to correct the deviation: 3.5%
+
+```{r inflation_target_max_100y_3-1 }
+# plot the inflation rate
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Price_gap_max_100y, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="Price gap (%)"
+       )
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+```
+
+
+
+# steady staetのinflation targetを計算
+
+#0.093 % のインフレは正当化できる
+
+```{r inflation_target_max_100y_3-2, echo=FALSE}
+
+df_all_usa_max_100y <- df_all_usa_max_100y %>%
+  mutate(Carbon_price_2012_dollar_max_100y = Carbon_price_2010_dollar_base_max_100y/ df_all_usa_max_100y[df_all_usa_max_100y$Quarterly_time == "2012-05-15","core_PCE_price_level_base_2010"]) %>%
+  mutate(portion_max_100y = (((Carbon_price_2012_dollar_max_100y * CO2_t_gdp_wighted)/(10^9)) /Real_GDP_Billions_dollars_2012) *100)
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$portion_max_100y, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="portion (%)"
+       )
+
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+# approximately 3.2 %
+
+(1+ 1.03*0.032)/1.032
+
+```
+
+
+
+
+```{r Taylor_rule_max_100y_3-1, echo=FALSE}
+df_all_usa_max_100y <- df_all_usa_max_100y %>%
+  mutate(Effective_FF_rate_lag_one_quarter = as.numeric(Effective_FF_rate_lag_one_quarter),
+         Inflation_target_Two_pct = as.numeric(Inflation_target_Two_pct),
+         Inflation_target_Two_pct_plus = as.numeric(Inflation_target_Two_pct) +0.093,
+         Core_PCE_inflation_quarter = as.numeric(Core_PCE_inflation_quarter),
+         Natural_interest_LW = as.numeric(Natural_interest_LW),
+         Natural_interest_HLW = as.numeric(Natural_interest_HLW),
+         Real_gdp_gap_cbo = as.numeric(Real_gdp_gap_cbo)
+         ) 
+
+
+
+
+df_all_usa_max_100y <- df_all_usa_max_100y %>%
+  mutate(Revised_output_gap_pct_max_100y_lead1 = lead(Revised_output_gap_pct_max_100y,n=1),
+         Real_gdp_gap_cbo_lead1 = lead(Real_gdp_gap_cbo, n=1)) %>%
+  mutate(Natural_interest_LW_revised_max_100y = Natural_interest_LW + (Revised_output_gap_pct_max_100y_lead1 - Real_gdp_gap_cbo_lead1) - (Revised_output_gap_pct_max_100y - Real_gdp_gap_cbo)) %>%
+  mutate(Natural_interest_HLW_revised_max_100y = Natural_interest_HLW + (Revised_output_gap_pct_max_100y_lead1 - Real_gdp_gap_cbo_lead1) - (Revised_output_gap_pct_max_100y - Real_gdp_gap_cbo))
+  
+   
+
+
+
+df_all_usa_max_100y　<- df_all_usa_max_100y %>%
+  drop_na(c(Effective_FF_rate_lag_one_quarter, 
+            Core_PCE_inflation_quarter,
+            Real_gdp_gap_cbo,
+            Actual_Effective_FF_rate,
+            Natural_interest_HLW,
+            Revised_output_gap_pct_max_100y,
+            Natural_interest_LW,
+            Natural_interest_LW_revised_max_100y,
+            Natural_interest_HLW_revised_max_100y
+            )
+          )
+
+
+# initial condition for Revised poly rule 1
+
+df_all_usa_max_100y[2, "Revised_Policy_rule_1_lag"] <- df_all_usa_max_100y[1, "Effective_FF_rate_lag_one_quarter"]# initial condition
+
+
+# initial condition for Conventional poly rule 1
+
+df_all_usa_max_100y[2, "Conventional_policy_1_lag"] <- df_all_usa_max_100y[1, "Effective_FF_rate_lag_one_quarter"]
+
+# initial condition for Revised poly rule 3
+
+df_all_usa_max_100y[2, "Revised_Policy_rule_3_lag"] <- df_all_usa_max_100y[1, "Effective_FF_rate_lag_one_quarter"]
+
+
+# initial condition for Conventional poly rule 3
+
+df_all_usa_max_100y[2, "Conventional_policy_3_lag"] <- df_all_usa_max_100y[1, "Effective_FF_rate_lag_one_quarter"]
+
+
+for (j in 2:dim(df_all_usa_max_100y)[1]){
+  
+  df_all_usa_max_100y_j <- df_all_usa_max_100y[j,]
+  
+  
+  
+  # Rebised policy rule 1 HLW
+  
+  df_all_usa_max_100y_j <- df_all_usa_max_100y_j %>%
+    mutate(
+    Revised_Policy_rule_1 = 0.85 *Revised_Policy_rule_1_lag
+         + (1 - 0.85 )*((Natural_interest_HLW_revised_max_100y  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct_max_100y)
+    )
+  
+  df_all_usa_max_100y[j, "Revised_Policy_rule_1"] <- df_all_usa_max_100y_j[1, "Revised_Policy_rule_1"]
+  df_all_usa_max_100y[j+1, "Revised_Policy_rule_1_lag"] <- df_all_usa_max_100y_j[1, "Revised_Policy_rule_1"]
+  
+  
+  # Conventional policy rule 1 HLW
+  
+  df_all_usa_max_100y_j <- df_all_usa_max_100y_j %>%
+    mutate(
+    Conventional_policy_1 = 0.85 *Conventional_policy_1_lag
+         + (1 - 0.85 )*((Natural_interest_HLW  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Real_gdp_gap_cbo)
+    )
+  
+  df_all_usa_max_100y[j, "Conventional_policy_1"] <- df_all_usa_max_100y_j[1, "Conventional_policy_1"]
+  df_all_usa_max_100y[j+1, "Conventional_policy_1_lag"] <- df_all_usa_max_100y_j[1, "Conventional_policy_1"]
+  
+  
+  # Revised policy rule 3 LW
+  
+  
+  df_all_usa_max_100y_j <- df_all_usa_max_100y_j %>%
+    mutate(
+    Revised_Policy_rule_3 = 0.85 *Revised_Policy_rule_3_lag
+         + (1 - 0.85 )*((Natural_interest_LW_revised_max_100y  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct_max_100y)
+    )
+  
+  df_all_usa_max_100y[j, "Revised_Policy_rule_3"] <- df_all_usa_max_100y_j[1, "Revised_Policy_rule_3"]
+  df_all_usa_max_100y[j+1, "Revised_Policy_rule_3_lag"] <- df_all_usa_max_100y_j[1, "Revised_Policy_rule_3"]
+  
+  
+  
+  # Conventional  policy rule 3 LW
+  
+  df_all_usa_max_100y_j <- df_all_usa_max_100y_j %>%
+    mutate(
+    Conventional_policy_3 = 0.85 *Conventional_policy_3_lag
+         + (1 - 0.85 )*((Natural_interest_LW  + Inflation_target_Two_pct) 
+                        + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Real_gdp_gap_cbo)
+    )
+  
+  df_all_usa_max_100y[j, "Conventional_policy_3"] <- df_all_usa_max_100y_j[1, "Conventional_policy_3"]
+  df_all_usa_max_100y[j+1, "Conventional_policy_3_lag"] <- df_all_usa_max_100y_j[1, "Conventional_policy_3"]
+  
+}
+  
+
+
+
+df_all_usa_max_100y <- df_all_usa_max_100y %>%
+  rowwise() %>%
+  mutate(
+    Revised_Policy_rule_2 = ((Natural_interest_HLW_revised_max_100y + Inflation_target_Two_pct_plus) 
+                                  + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct_plus) + Revised_output_gap_pct_max_100y),
+         Conventional_policy_2 = ((Natural_interest_HLW  + Inflation_target_Two_pct) + 1.5* (Core_PCE_inflation_quarter -  Inflation_target_Two_pct) + Real_gdp_gap_cbo),
+    Policy_rule_gap_1 = Revised_Policy_rule_1 -  Conventional_policy_1,
+    Policy_rule_gap_2 = Revised_Policy_rule_2 -  Conventional_policy_2,
+    Policy_rule_gap_3 = Revised_Policy_rule_3 -  Conventional_policy_3
+         ) 
+
+```  
+
+
+
+
+
+
+```{r Taylor_rule_plot_max_100y_3-1}
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Revised_Policy_rule_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,20),
+     main="Taylor rule vs Actual FF rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Conventional_policy_1, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Actual_Effective_FF_rate, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 1","Classic Taylor rule 1", "Acutual Federal Fund rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+```
+```{r  plot gap max_100y 3-1}
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Policy_rule_gap_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,5),
+     main="Revised policy rule 2 - Conventional policy rule 2",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+```
+
+
+
+
+
+
+```{r Taylor_rule_plot_max_100y_3-2}
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Revised_Policy_rule_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,20),
+     main="Taylor rule vs Actual FF rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Conventional_policy_2, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Actual_Effective_FF_rate, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topright",
+       box.lwd=0,
+      legend  =c("Green Taylor rule 2","Classic Taylor rule 2", "Acutual Federal Fund rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+```
+
+
+```{r  plot_gap_max_100y_3-2}
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Policy_rule_gap_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,4),
+     main="Revised policy rule 2 - Conventional policy rule 2",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+```
+```{r inflation_target_all, echo=FALSE}
+# plot the inflation rate
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Price_gap, 
+     type='l', 
+     col = 'red', 
+     ylim=c(0,8),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Price gap (%)"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Price_gap_max_max, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Price_gap_max_100y, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius"),
+      col=c("red", "blue","orange"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+```{r outputgap_all, echo=FALSE}
+# plot the inflation rate
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Revised_output_gap_pct, 
+     type='l', 
+     col = 'red', 
+     ylim=c(-10,20),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$Revised_output_gap_pct_max_max, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$Revised_output_gap_pct_max_100y, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$Real_gdp_gap_cbo, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,20),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius", "Actual output gap"),
+      col=c("red", "blue","orange", "black"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+# Calculate CO2 emissions
+```{r Carbon_emissions_all, echo=FALSE}
+
+df_all_usa_base <- df_all_usa_base %>%
+  mutate(CO2_billion_t_base = ((1 - (Price_gap/100))*CO2_t )/ 10^9) %>%
+  mutate(CO2_billion_t = CO2_t/ 10^9)
+
+df_all_usa_max_max <- df_all_usa_max_max %>%
+  mutate(CO2_billion_t_max_max = ((1 - (Price_gap_max_max/100))*CO2_t)/10^9 )%>%
+  mutate(CO2_billion_t = CO2_t/ 10^9)
+
+df_all_usa_max_100y <- df_all_usa_max_100y %>%
+  mutate(CO2_billion_t_max_100y = ((1 - (Price_gap_max_100y/100))*CO2_t)/10^9 ) %>%
+  mutate(CO2_billion_t = CO2_t/ 10^9)
+
+
+# plot the inflation rate
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$CO2_billion_t_base, 
+     type='l', 
+     col = 'red', 
+     ylim=c(2,8),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Carbon emissions billion ton"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$CO2_billion_t_max_max, 
+      type='l',
+      lty=2,
+      col = 'blue',
+       ylim=c(2,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$CO2_billion_t_max_100y, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(2,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$CO2_billion_t, 
+      type='l',
+      lty=1,
+      col = 'black',
+       ylim=c(2,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius", "Actual output gap"),
+      col=c("red", "blue","orange", "black"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+
+# Calculate CO2 emission reduction
+```{r Carbon_emission_reduction_rate_all, echo=FALSE}
+
+df_all_usa_base <- df_all_usa_base %>%
+  mutate(CO2_billion_t_base_diff = ((CO2_billion_t - CO2_billion_t_base)/ CO2_billion_t)* 100)
+
+df_all_usa_max_max <- df_all_usa_max_max %>%
+  mutate(CO2_billion_t_max_max_diff = ((CO2_billion_t - CO2_billion_t_max_max)/ CO2_billion_t)*100 )
+
+df_all_usa_max_100y <- df_all_usa_max_100y %>%
+  mutate(CO2_billion_t_max_100y_diff =  ((CO2_billion_t - CO2_billion_t_max_100y)/ CO2_billion_t)*100 )
+
+
+# plot the inflation rate
+
+
+plot(x=df_all_usa_base$Quarterly_time, y=df_all_usa_base$CO2_billion_t_base_diff, 
+     type='l', 
+     col = 'red', 
+     ylim=c(0,8),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Carbon emissions reduction rate (%)"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_usa_max_max$Quarterly_time, y=df_all_usa_max_max$CO2_billion_t_max_max_diff, 
+      type='l',
+      lty=2,
+      col = 'blue',
+       ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_usa_max_100y$Quarterly_time, y=df_all_usa_max_100y$CO2_billion_t_max_100y_diff, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius"),
+      col=c("red", "blue","orange"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```

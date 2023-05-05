@@ -1,0 +1,2094 @@
+---
+title: "New_Taylor_rule_Japan"
+author: "Kanta Ogawa"
+date: "2022-11-25"
+output:
+  html_document:
+    self_contained: false
+---
+
+From Federal Reserve Bank of Atlanta
+<https://www.atlantafed.org/cqer/research/taylor-rule?panel=2>
+
+\hat{i}_{t} = \rho {i}_{t-1} + (1 - \rho )[(r^{*}_{t} + \pi^{*}_{t}) + 1.5 (\pi_{t} - \pi^{*}_{t}) + \beta x_{t} ]
+
+# inflation measure \pi_{t
+CPI?or coreCPI?
+
+
+# inflation target \pi^{*}_{t}
+an annual rate of 2 percent PCE inflation "is most consistent
+-The midpoint of the central tendency of FOMC participants' longer-run PCE inflation projections is another option for the inflation target. These midpoints, included in the Summary of Economic Projections (SEP), were either 1.80 or 1.85 percent prior to 2012.
+
+# Natural interest rate r^{*}_{t}
+ここも変わりそう
+3 types of measures
+varying parameter
+Taylor noted in his paper that his choice was close to the 2.2 percent trend growth rate of real GDP from 1984:Q1 to 1992:Q3 estimated at the time of his writing.
+Recalculate
+
+
+# Resource gap measures: gap
+#US potential gdp
+The output gap is the number of percentage points that real GDP is above or below an estimate of potential
+From Bank of Japan,
+<https://www.boj.or.jp/research/research_data/gap/index.htm/>
+
+
+#Interest-rate smoothing parameter \rho
+0 and 0.85
+
+A smoothing parameter of 0.85 
+
+
+# Weight on the resource gap: \beta
+0.5 and 1
+A very commonly used alternative value, utilized as the default setting for the "Alternative 2" line in the chart, is 1.
+Versions of this rule are often called "Taylor 1999" from a paper by Taylor that considered a rule with this larger weight on the resource gap.
+
+1.5??
+
+
+```{r ibrary, include=FALSE}
+library(dplyr)
+library(tidyverse)
+pacman::p_load(ggplot2, mFilter, openxlsx,lubridate,devtools,bsts)
+ 
+
+```
+
+
+```{r read data, include=FALSE}
+# Real gdp jpn, yen, seasonally adjusted quarterly level, 2015
+## <https://fred.stlouisfed.org/series/NGDPRSAXDCJPQ>
+df_real_gdp_2015_yen_jpn <- read_csv("../Monetary_policy/data/Japan/Real_gdp_jpn.csv")
+
+
+# Nominal gdp jpn, yen, seasonally adjusted, quarterly level
+##<https://fred.stlouisfed.org/series/NGDPSAXDCJPQ>
+df_nominal_gdp_yen_jpn <- read_csv("../Monetary_policy/data/Japan/Nominal_gdp_jpn.csv")
+
+df_output_gap_jpn <- read_csv("../Monetary_policy/data/Japan/Output_gap_jpn.csv")
+
+df_policy_interest_jpn <- read_csv("../Monetary_policy/data/Japan/Policy_interest_rate_jpn.csv")
+df_inflation_jpn <- read_csv("../Monetary_policy/data/Japan/CPI_growth_jpn.csv")
+# 2015 100
+df_price_level_jpn <- read_csv("../Monetary_policy/data/Japan/CPI_price_level_jpn.csv")
+df_interest_bond_jpn <- read_csv("../Monetary_policy/data/Japan/Interest_on_Long_term_bond_jpn.csv")
+df_natural_interest_from_boj <- read.xlsx("../Monetary_policy/data/Japan/Boj_natural_interest.xlsx") 
+  
+
+
+df_carbon <- read_csv("../Monetary_policy/data/Annual-co2-emissions-Our_World_in_data.csv")
+```
+
+
+
+
+
+
+```{r public_data_jpn, echo=FALSE}
+# real gdp
+df_real_gdp_2015_yen_jpn <- df_real_gdp_2015_yen_jpn %>%
+  mutate(Quarterly_time=DATE) %>%
+  rename("Real_gdp_2015_Millions_yen_jpn" = NGDPRSAXDCJPQ) %>%
+  select(Quarterly_time, Real_gdp_2015_Millions_yen_jpn)
+
+# Nominal gdp
+df_nominal_gdp_yen_jpn <- df_nominal_gdp_yen_jpn %>%
+  mutate(Quarterly_time = DATE) %>%
+  rename("Nominal_gdp_Millions_yen_jpn" = NGDPSAXDCJPQ) %>%
+  select(Quarterly_time, Nominal_gdp_Millions_yen_jpn)
+
+# Output gap
+df_output_gap_jpn <- df_output_gap_jpn %>%
+  mutate(Quarterly = gsub(pattern=".1Q", replacement="-01-01", Quarterly)) %>%
+  mutate(Quarterly = gsub(pattern=".2Q", replacement="-04-01", Quarterly)) %>%
+  mutate(Quarterly = gsub(pattern=".3Q", replacement="-07-01", Quarterly)) %>%
+  mutate(Quarterly = gsub(pattern=".4Q", replacement="-10-01", Quarterly)) %>%
+  mutate(Quarterly_time = as.Date(Quarterly),
+         Output_gap_pct_jpn =`Output gap_pct`) %>%
+  select(Quarterly_time, Output_gap_pct_jpn)
+
+df_output_gap_jpn <- na.omit(df_output_gap_jpn)
+
+# policy interest rate
+df_policy_interest_jpn <- df_policy_interest_jpn %>% # delte the redandunt row
+  mutate(Quarterly_time=DATE) %>%
+  rename("Actual_policy_rate_jpn"=IRSTCB01JPQ156N) %>%
+  select(Quarterly_time, Actual_policy_rate_jpn)
+
+
+# inflation rate
+df_inflation_jpn <- df_inflation_jpn %>% 
+  mutate(Quarterly_time=DATE) %>%
+  rename("Inflation_rate_measured_in_CPI_pct_jpn"=CPALTT01JPQ659N) %>%
+  select(Quarterly_time, Inflation_rate_measured_in_CPI_pct_jpn)
+
+# price level
+df_price_level_jpn <- df_price_level_jpn %>%
+  mutate(Quarterly_time=DATE) %>%
+  rename("Price_level_measured_in_CPI_2015_jpn" = CPALTT01JPQ661S) %>%
+  select(Quarterly_time, Price_level_measured_in_CPI_2015_jpn)
+
+# Interest rate on the Long-term bond
+df_interest_bond_jpn <- df_interest_bond_jpn %>%
+  mutate(Quarterly_time=DATE) %>%
+  rename("Interest_rate_on_bond_jpn" = IRLTLT01JPQ156N) %>%
+  select(Quarterly_time, Interest_rate_on_bond_jpn)
+
+# Natural interest rate from BOJ
+df_natural_interest_from_boj <- df_natural_interest_from_boj %>%
+  rename(Natural_interest_rate_DSGE = Baseline_model_based_natural_interest_rate,
+         Natural_interest_rate_LW = LW_based_natural_interest_rate) %>%
+  mutate(Quarterly = X1)%>%
+  mutate(Quarterly = gsub(pattern="Q1", replacement="-01-01", Quarterly)) %>%
+  mutate(Quarterly = gsub(pattern="Q2", replacement="-04-01", Quarterly)) %>%
+  mutate(Quarterly = gsub(pattern="Q3", replacement="-07-01", Quarterly)) %>%
+  mutate(Quarterly = gsub(pattern="Q4", replacement="-10-01", Quarterly)) %>%
+  mutate(Quarterly_time = as.Date(Quarterly)) %>%
+  select(Quarterly_time, Natural_interest_rate_DSGE, Natural_interest_rate_LW)
+
+
+
+# bind data
+df_all_jpn <- full_join(df_real_gdp_2015_yen_jpn, df_nominal_gdp_yen_jpn, by="Quarterly_time")
+df_all_jpn <- full_join(df_all_jpn, df_output_gap_jpn, by="Quarterly_time")
+df_all_jpn <- full_join(df_all_jpn, df_policy_interest_jpn, by="Quarterly_time")
+df_all_jpn <- full_join(df_all_jpn, df_inflation_jpn, by="Quarterly_time")
+df_all_jpn <- full_join(df_all_jpn, df_price_level_jpn, by="Quarterly_time")
+df_all_jpn <- full_join(df_all_jpn, df_interest_bond_jpn, by="Quarterly_time")
+df_all_jpn <- full_join(df_all_jpn,df_natural_interest_from_boj, by="Quarterly_time")
+
+# compute the real interest 
+df_real_interest_jpn  <- df_all_jpn  %>%
+  mutate(Real_interest = Interest_rate_on_bond_jpn - Inflation_rate_measured_in_CPI_pct_jpn)%>%
+  select(Quarterly_time, Real_interest)
+
+
+df_real_interest_jpn <- na.omit(df_real_interest_jpn)
+
+df_real_interest_jpn$natural_interest_hp <- hpfilter(df_real_interest_jpn$Real_interest, freq=6.25, type="lambda", drift=TRUE)$trend
+
+
+df_all_jpn <- full_join(df_all_jpn, df_real_interest_jpn, by="Quarterly_time") 
+
+#plot policy interest data
+
+plot(x=df_policy_interest_jpn$Quarterly_time, y=df_policy_interest_jpn$Actual_policy_rate_jpn,
+     type='l', 
+     col = 'darkorange', 
+     main="Policy interest rate in Japan",
+     xlab= "Quarterly Periods",
+     ylab="Policy interest rate(%)"
+       )
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+```{r carbon_jpn, echo=FALSE }
+
+# CO2 emission
+df_carbon <- df_carbon %>%
+  rename("year"=Year,"country_code" = Code, "CO2_t" = `Annual CO2 emissions`)%>%
+  filter(year >= 1960)
+
+df_carbon_cost_jpn <- df_carbon %>%
+    filter(country_code == "JPN")
+
+## duplication of 1/1
+df_carbon_Jan_jpn <- df_carbon_cost_jpn %>%
+  mutate(Quarterly_time = as.Date(ISOdate(year, 1,1)),
+         CO2_t_annual = CO2_t) %>%
+  select(country_code, Quarterly_time, CO2_t_annual)
+
+
+## duplicate 4/1
+df_carbon_Apr_jpn <- df_carbon_cost_jpn %>%
+  mutate(Quarterly_time =as.Date(ISOdate(year, 1,1)) %m+% months(3),
+         CO2_t_annual = CO2_t) %>%
+  select(country_code, Quarterly_time, CO2_t_annual)
+
+## duplicate 7/1
+df_carbon_Jul_jpn <- df_carbon_cost_jpn %>%
+  mutate(Quarterly_time = as.Date(ISOdate(year, 1,1))%m+% months(6),
+         CO2_t_annual = CO2_t) %>%
+  select(country_code, Quarterly_time, CO2_t_annual)
+
+## duplicate 10/1
+df_carbon_Oct_jpn <- df_carbon_cost_jpn %>%
+  mutate(Quarterly_time = as.Date(ISOdate(year, 1,1))%m+% months(9),
+         CO2_t_annual = CO2_t) %>%
+  select(country_code, Quarterly_time, CO2_t_annual)
+
+df_carbon_quarterly_jpn <- rbind(df_carbon_Jan_jpn, df_carbon_Apr_jpn, df_carbon_Jul_jpn, df_carbon_Oct_jpn) 
+
+# carbon emission weight on quarterly gdp
+df_all_jpn <- full_join(df_all_jpn, df_carbon_quarterly_jpn, by="Quarterly_time") %>%
+   mutate(year = format(Quarterly_time,"%Y"),
+         Real_gdp_for_sum = Real_gdp_2015_Millions_yen_jpn)
+
+df_real_gdp_for_transform  <- df_all_jpn %>%
+  group_by(year) %>%
+  summarize(Annual_real_GDP_2015_Millions_yen_GDP  = sum(Real_gdp_for_sum)) %>%
+  ungroup() 
+
+
+
+df_all_jpn <- full_join(df_all_jpn, df_real_gdp_for_transform, by="year") %>%
+  mutate(Real_gdp_weight = Real_gdp_2015_Millions_yen_jpn/Annual_real_GDP_2015_Millions_yen_GDP) %>%
+  mutate(CO2_t_quarterly = CO2_t_annual*Real_gdp_weight)
+
+
+  
+  
+
+plot(x=df_all_jpn$Quarterly_time, y=df_all_jpn$CO2_t_quarterly, 
+     type='l', 
+     col = 'darkorange', 
+     main="CO2 emission (t)",
+     xlab= "Quarterly Periods",
+     ylab="CO2 emission (t)"
+       )
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")           
+  
+            
+
+
+```
+From DICE model
+
+# Base parametes
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 31.21 2010 international US dollars / tCO2
+     111.710 yen_2010 / 1 2010 international US dollars
+
+```{r carbon_data_creation_base_jpn, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_base <- rev(GeometricSequence(56*4, initial.value = (111.710 * 31.21)/((1.03)^(1/4)), discount.factor = 1/(1.03^(1/4))) )
+pre_2015_base <- rev(seq(as.Date("2015-01-01"), length = length(vec_pre_2015_base), by = "-1 quarter")) # not include 2015/05/15
+
+
+
+vec_post_2015_base <- GeometricSequence(8*4, initial.value = 111.710 * 31.21, discount.factor = 1.03^(1/4)) 
+post_2015_base <- seq(as.Date("2015-01-01"), length = length(vec_post_2015_base), by = "quarter") #  include 2015/05/15
+
+# check length
+length(c(vec_pre_2015_base, vec_post_2015_base))
+length(c(pre_2015_base, post_2015_base))
+
+# combined vec
+Carbon_price_2010_yen_base<- c(vec_pre_2015_base, vec_post_2015_base)
+Quarterly_time <- c(pre_2015_base, post_2015_base)
+df_carbon_price_jpn_base <- data.frame(Quarterly_time, Carbon_price_2010_yen_base) 
+ggplot(data=df_carbon_price_jpn_base, aes(x=Quarterly_time, y=Carbon_price_2010_yen_base) )  +geom_line()
+```
+
+
+
+
+# 2.5 degree maximum - Maimum
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 184.4 2010 international US dollars / tCO2
+111.710 yen_2010 / 1 2010 international US dollars
+
+
+```{r carbon_data_creation_max_max_jpn, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_max_max <- rev(GeometricSequence(56*4, initial.value = (111.710 * 184.4)/((1.03)^(1/4)), discount.factor = 1/(1.03^(1/4))) )
+pre_2015_max_max <- rev(seq(as.Date("2015-01-01"), length = length(vec_pre_2015_max_max), by = "-1 quarter")) # not include 2015/05/15
+
+
+
+vec_post_2015_max_max <- GeometricSequence(8*4, initial.value = 111.710* 184.4, discount.factor = 1.03^(1/4)) 
+post_2015_max_max <- seq(as.Date("2015-01-01"), length = length(vec_post_2015_max_max), by = "quarter") #  include 2015/05/15
+
+# check length
+length(c(vec_pre_2015_max_max, vec_post_2015_max_max))
+length(c(pre_2015_max_max, post_2015_max_max))
+
+# combined vec
+Carbon_price_2010_yen_max_max <- c(vec_pre_2015_max_max, vec_post_2015_max_max)
+Quarterly_time <- c(pre_2015_max_max, post_2015_max_max)
+df_carbon_price_jpn_max_max <- data.frame(Quarterly_time, Carbon_price_2010_yen_max_max) 
+ggplot(data=df_carbon_price_jpn_max_max, aes(x=Quarterly_time, y=Carbon_price_2010_yen_max_max) )  +geom_line()
+```
+
+# 2.5 degree maximum - max_100y
+
+<https://www.pnas.org/doi/10.1073/pnas.1609244114>
+2015: 184.4 2010 international US dollars / tCO2
+111.710 yen_2010 / 1 2010 international US dollars
+
+```{r carbon_data_creation_max_100y_jpn, echo=FALSE}
+
+
+# compute in US dollar base
+vec_pre_2015_max_100y <- rev(GeometricSequence(56*4, initial.value = (111.710 * 106.7)/((1.03)^(1/4)), discount.factor = 1/(1.03^(1/4))) )
+pre_2015_max_100y <- rev(seq(as.Date("2015-01-01"), length = length(vec_pre_2015_max_100y), by = "-1 quarter")) # not include 2015/05/15
+
+
+
+vec_post_2015_max_100y <- GeometricSequence(8*4, initial.value = 111.710 * 106.7, discount.factor = 1.03^(1/4)) 
+post_2015_max_100y <- seq(as.Date("2015-01-01"), length = length(vec_post_2015_max_100y), by = "quarter") #  include 2015/05/15
+
+# check length
+length(c(vec_pre_2015_max_100y, vec_post_2015_max_100y))
+length(c(pre_2015_max_100y, post_2015_max_100y))
+
+# combined vec
+Carbon_price_2010_yen_max_100y <- c(vec_pre_2015_max_100y, vec_post_2015_max_100y)
+Quarterly_time <- c(pre_2015_max_100y, post_2015_max_100y)
+df_carbon_price_jpn_max_100y <- data.frame(Quarterly_time, Carbon_price_2010_yen_max_100y) 
+ggplot(data=df_carbon_price_jpn_max_100y, aes(x=Quarterly_time, y=Carbon_price_2010_yen_max_100y) )  + geom_line()
+
+```
+
+
+
+
+
+
+
+```{r data_bind_jpn_2}
+df_all_jpn <- left_join(df_all_jpn, df_carbon_price_jpn_base, by="Quarterly_time")
+
+
+df_all_jpn <- left_join(df_all_jpn, df_carbon_price_jpn_max_max, by="Quarterly_time")
+
+
+df_all_jpn <- left_join(df_all_jpn, df_carbon_price_jpn_max_100y, by="Quarterly_time")%>%
+   mutate(Potential_gdp_Millions_yen_2015 = Real_gdp_2015_Millions_yen_jpn/(1 + (Output_gap_pct_jpn)/100),
+          Price_2015_jpn = Nominal_gdp_Millions_yen_jpn / Real_gdp_2015_Millions_yen_jpn) %>%
+   mutate(Nominal_potential_gdp_Millions_yen =  Price_2015_jpn * Potential_gdp_Millions_yen_2015)%>%
+   mutate(Policy_interest_rate_lag_1 = lag(Actual_policy_rate_jpn,n=1),
+          inflation_target_2pct = 2)
+ 
+ 
+
+```
+
+
+
+# base parametes
+df_all_jpn[df_all_jpn$Quarterly_time == "2010-04-01","Price_level_measured_in_CPI_2015_jpn"])
+96.6
+
+```{r data_bind_base_jpn_1}
+
+df_all_jpn_base <- df_all_jpn %>%
+  mutate(Price_level_one_in_CPI_2010_jpn = Price_level_measured_in_CPI_2015_jpn / 96.6)%>%
+  mutate(Nominal_carbon_price_base = Price_level_one_in_CPI_2010_jpn*Carbon_price_2010_yen_base) %>%
+  mutate(Nominal_total_carbon_cost_Millions_yen_base = (Nominal_carbon_price_base * CO2_t_quarterly) / 10^6) %>%
+  mutate(Nominal_caron_cost_over_Nominal_GDP_pct_base = (Nominal_total_carbon_cost_Millions_yen_base / Nominal_gdp_Millions_yen_jpn) * 100) %>%
+  mutate(Optimal_price_2015_base_jpn = (Nominal_gdp_Millions_yen_jpn + Nominal_total_carbon_cost_Millions_yen_base)/Real_gdp_2015_Millions_yen_jpn) %>%
+  mutate(Optimal_real_GDP_Millions_yen_2015_base = Nominal_potential_gdp_Millions_yen/ Optimal_price_2015_base_jpn ) %>%
+  mutate(Revised_output_gap_pct_jpn_base = ((Real_gdp_2015_Millions_yen_jpn - Optimal_real_GDP_Millions_yen_2015_base)/ Optimal_real_GDP_Millions_yen_2015_base) *100) %>%
+  mutate(Optimal_price_2015_base_1past = lag(Optimal_price_2015_base_jpn,n=1)) %>%
+  mutate(Price_gap_jpn = ((Optimal_price_2015_base_jpn - Price_2015_jpn)/Price_2015_jpn)*100)
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r compare_base_jpn_1}
+
+## Compare price level
+
+g_price_level_compare_base  <- ggplot(data=df_all_jpn_base, aes(x=Quarterly_time, y=Optimal_price_2015_base_jpn, color="Optimal  price level base 2015") )  + geom_line() + ylim(0,1.2) + xlab("Quarterly Periods") + ylab("price level based 2015")
+
+g_price_level_compare_base <- g_price_level_compare_base +geom_line(data=df_all_jpn_base, aes(x=Quarterly_time, y=Price_2015_jpn, color="price level base 2015") )
+print(g_price_level_compare_base)
+
+
+## Compare GDP
+g_gdp_compare_base  <- ggplot(data=df_all_jpn_base, aes(x=Quarterly_time, y=Optimal_real_GDP_Millions_yen_2015_base, color="Optimal real GDP Millions of yen 2015") )  +geom_line() + xlab("Quarterly Periods") + ylab("Millions of yen based on 2015")
+
+g_gdp_compare_base <- g_gdp_compare_base +geom_line(data=df_all_jpn_base, aes(x=Quarterly_time, y=Real_gdp_2015_Millions_yen_jpn, color="Real GDP Millions of yen 2015") )
+print(g_gdp_compare_base)
+
+## Compare log GDP
+
+g_log_gdp_compare_base  <- ggplot(data=df_all_jpn_base, aes(x=Quarterly_time, y=log(Optimal_real_GDP_Millions_yen_2015_base), color="log Optimal real GDP Millions of yen 2015") )  + geom_line()  + xlab("Quarterly Periods") 
+
+
+g_log_gdp_compare_base <- g_log_gdp_compare_base + geom_line(data=df_all_jpn_base, aes(x=Quarterly_time, y=log(Real_gdp_2015_Millions_yen_jpn), color="log Real GDP Millions of yen 2015") )
+print(g_log_gdp_compare_base)
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Revised_output_gap_pct_jpn_base, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Conventional Real Output gap(%)",
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)",
+     ylim=c(-20,20)
+       )
+
+  
+
+lines(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Output_gap_pct_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-20,20),
+      xlab="",
+      ylab="")
+
+
+
+legend("topright",
+      legend  =c("Revised Real Output gap(%)","Conventional Real Output gap(%)"),
+      col=c("red", "black"),
+      lwd=2,
+      lty=c(1,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+# to correct the deviation
+
+```{r inflation_target_base_jpn_1-1}
+# plot the inflation rate
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Price_gap_jpn, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="Price gap (%)"
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+
+
+
+
+# steady staetのinflation targetを計算
+
+#0.0253 % のインフレは正当化できる
+df_all_jpn_base[df_all_jpn_base$Quarterly_time == "2010-01-01","Price_level_measured_in_CPI_2015_jpn"]
+96.8
+
+```{r inflation_target_base_jpn_1-2}
+
+
+df_all_jpn_base <- df_all_jpn_base %>%
+  mutate(Carbon_price_2015_yen_base = Carbon_price_2010_yen_base *(100/96.8) )%>%
+  mutate(portion = (((Carbon_price_2015_yen_base * CO2_t_quarterly)/(10^6)) /Real_gdp_2015_Millions_yen_jpn) *100)
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$portion, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="portion (%)"
+       )
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+# approximately 0.85 %
+
+
+
+(1+ 1.03*0.0085)/1.0085
+
+```
+
+
+
+```{r Taylor_rule_base_jpn_1}
+
+
+df_all_jpn_base <- df_all_jpn_base %>%
+  mutate(Inflation_target_Two_pct_plus_base = inflation_target_2pct + 0.0253)
+
+
+df_all_jpn_base <- df_all_jpn_base %>%
+  mutate(Revised_output_gap_pct_jpn_base_lead1 = lead(Revised_output_gap_pct_jpn_base,n=1),
+         Output_gap_pct_jpn_lead1 = lead(Output_gap_pct_jpn, n=1)) %>%
+  mutate(Natural_interest_rate_DSGE_revised_jpn_base = Natural_interest_rate_DSGE+ (Revised_output_gap_pct_jpn_base_lead1 - Output_gap_pct_jpn_lead1) - (Revised_output_gap_pct_jpn_base- Output_gap_pct_jpn)) %>%
+  mutate(Natural_interest_rate_LW_revised_jpn_base = Natural_interest_rate_LW+ (Revised_output_gap_pct_jpn_base_lead1 - Output_gap_pct_jpn_lead1) - (Revised_output_gap_pct_jpn_base- Output_gap_pct_jpn))
+
+  
+  
+
+
+
+
+df_all_jpn_base　<- df_all_jpn_base %>%
+  drop_na(c(Actual_policy_rate_jpn, 
+            Natural_interest_rate_DSGE,
+            Inflation_rate_measured_in_CPI_pct_jpn,
+            Inflation_target_Two_pct_plus_base,
+            Revised_output_gap_pct_jpn_base,
+            Output_gap_pct_jpn,
+          Natural_interest_rate_DSGE_revised_jpn_base
+            )
+          )
+
+
+# initial condition for Revised poly rule 1
+
+df_all_jpn_base[2, "Revised_Policy_rule_1_lag"] <- df_all_jpn_base[1, "Actual_policy_rate_jpn"]# initial condition
+
+
+# initial condition for Conventional poly rule 1
+
+df_all_jpn_base[2, "Conventional_policy_1_lag"] <- df_all_jpn_base[1, "Actual_policy_rate_jpn"]
+
+# initial condition for Revised poly rule 3
+
+df_all_jpn_base[2, "Revised_Policy_rule_3_lag"] <- df_all_jpn_base[1, "Actual_policy_rate_jpn"]
+
+
+# initial condition for Conventional poly rule 3
+
+df_all_jpn_base[2, "Conventional_policy_3_lag"] <- df_all_jpn_base[1, "Actual_policy_rate_jpn"]
+
+
+for (j in 2:dim(df_all_jpn_base)[1]){
+  
+  df_all_jpn_base_j <- df_all_jpn_base[j,]
+  
+  
+  
+  # Revised policy rule 1 DSGE
+  
+  df_all_jpn_base_j <- df_all_jpn_base_j %>%
+    mutate(
+      Revised_Policy_rule_1 = 0.85 *Revised_Policy_rule_1_lag + (1 - 0.85 )*((Natural_interest_rate_DSGE_revised_jpn_base + Inflation_target_Two_pct_plus_base) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn - Inflation_target_Two_pct_plus_base) + Revised_output_gap_pct_jpn_base)
+    )
+  
+  df_all_jpn_base[j, "Revised_Policy_rule_1"] <- df_all_jpn_base_j[1, "Revised_Policy_rule_1"]
+  df_all_jpn_base[j+1, "Revised_Policy_rule_1_lag"] <- df_all_jpn_base_j[1, "Revised_Policy_rule_1"]
+  
+  
+  # Conventional policy rule 1 DSGE
+  
+  df_all_jpn_base_j <- df_all_jpn_base_j %>%
+    mutate(
+    Conventional_policy_1 = 0.85 *Conventional_policy_1_lag + (1 - 0.85 )*((Natural_interest_rate_DSGE + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn)
+    )
+  
+  df_all_jpn_base[j, "Conventional_policy_1"] <- df_all_jpn_base_j[1, "Conventional_policy_1"]
+  df_all_jpn_base[j+1, "Conventional_policy_1_lag"] <- df_all_jpn_base_j[1, "Conventional_policy_1"]
+  
+  
+df_all_jpn_base$Natural_interest_rate_LW  
+  
+  # Revised policy rule 3
+  df_all_jpn_base_j <- df_all_jpn_base_j %>%
+    mutate(
+      Revised_Policy_rule_3 = 0.85 *Revised_Policy_rule_1_lag + (1 - 0.85 )*((Natural_interest_rate_LW_revised_jpn_base + Inflation_target_Two_pct_plus_base) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn - Inflation_target_Two_pct_plus_base) + Revised_output_gap_pct_jpn_base)
+    )
+  
+  df_all_jpn_base[j, "Revised_Policy_rule_3"] <- df_all_jpn_base_j[1, "Revised_Policy_rule_3"]
+  df_all_jpn_base[j+1, "Revised_Policy_rule_3_lag"] <- df_all_jpn_base_j[1, "Revised_Policy_rule_3"]
+  
+  
+  
+  # Conventional policy rule 3 LW
+  
+  df_all_jpn_base_j <- df_all_jpn_base_j %>%
+    mutate(
+    Conventional_policy_3 = 0.85 *Conventional_policy_1_lag + (1 - 0.85 )*((Natural_interest_rate_LW + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn)
+    )
+  
+  df_all_jpn_base[j, "Conventional_policy_3"] <- df_all_jpn_base_j[1, "Conventional_policy_3"]
+  df_all_jpn_base[j+1, "Conventional_policy_3_lag"] <- df_all_jpn_base_j[1, "Conventional_policy_3"]
+  
+  
+  
+}
+  
+
+
+
+df_all_jpn_base <- df_all_jpn_base %>%
+  mutate(
+         Revised_Policy_rule_2 = Natural_interest_rate_DSGE_revised_jpn_base + Inflation_target_Two_pct_plus_base + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  Inflation_target_Two_pct_plus_base) + Revised_output_gap_pct_jpn_base,
+         Conventional_policy_2 = (Natural_interest_rate_DSGE  + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn
+         )%>%
+  mutate(
+    Policy_rule_gap_1 = Revised_Policy_rule_1 -  Conventional_policy_1,
+    Policy_rule_gap_2 = Revised_Policy_rule_2 -  Conventional_policy_2,
+    Policy_rule_gap_3 = Revised_Policy_rule_3 -  Conventional_policy_3
+         ) 
+
+
+
+
+```  
+
+
+
+
+
+```{r Taylor_rule_plot_base_jpn_1-1}
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Revised_Policy_rule_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-5,15),
+     main="Taylor rule vs Actual Policy interest rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Conventional_policy_1, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-5,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Actual_policy_rate_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-5,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topleft",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 1","Classic Taylor rule 1", "Acutual Policy Interest rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+g_plot_1  <- ggplot(data=df_all_jpn_base, aes(x=Quarterly_time, y=　Revised_Policy_rule_1, color="Green Taylor rule　1") )  + geom_line() +ylim(-5, 10)+ xlab("Quarterly Periods") + ylab("Interest rate(%)")
+
+g_plot_1 <- g_plot_1 +geom_line(data=df_all_jpn_base, aes(x=Quarterly_time, y=Conventional_policy_1, color="Classic Taylor rule 1") )
+
+g_plot_1 <- g_plot_1 +geom_line(data=df_all_jpn_base, aes(x=Quarterly_time, y=Actual_policy_rate_jpn, color="Acutual Policy Interest rate") )
+
+print(g_plot_1)
+
+
+
+
+
+```
+
+```{r plot_gap_base_jpn_1-1}
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Policy_rule_gap_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,1.5),
+     main="Revised policy rule 1 - Conventional policy rule 1",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+```
+
+
+
+```{r Taylor_rule_plot_base_jpn_1-2}
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Revised_Policy_rule_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,15),
+     main="Taylor rule vs Actual Policy interest rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+lines(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Conventional_policy_2, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="")
+
+
+
+
+lines(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Actual_policy_rate_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="")
+
+
+
+
+legend("topleft",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 2","Classic Taylor rule 2", "Acutual Policy Interest rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+g_plot_2  <- ggplot(data=df_all_jpn_base, aes(x=Quarterly_time, y=　Revised_Policy_rule_2, color="Greem Taylor rule 2") )  + geom_line() +ylim(-10, 10)+ xlab("Quarterly Periods") + ylab("Interest rate(%)")
+
+g_plot_2 <- g_plot_2 +geom_line(data=df_all_jpn_base, aes(x=Quarterly_time, y=Conventional_policy_2, color="Classic Taylor rule 2") )
+
+g_plot_2 <- g_plot_2 +geom_line(data=df_all_jpn_base, aes(x=Quarterly_time, y=Actual_policy_rate_jpn, color="Acutual Policy Interest rate") )
+
+print(g_plot_2)
+
+
+```
+```{r plot_gap_base_jpn_1-2}
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Policy_rule_gap_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,1.5),
+     main="Revised policy rule 2 - Conventional policy rule 2",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+```
+
+
+# 2.5 degree maximum - Maimum
+## hard cap senario
+
+
+
+```{r data_bind_max_max_jpn}
+
+df_all_jpn_max_max <- df_all_jpn %>%
+  mutate(Price_level_one_in_CPI_2010_jpn = Price_level_measured_in_CPI_2015_jpn / 96.6)%>%
+  mutate(Nominal_carbon_price_max_max = Price_level_one_in_CPI_2010_jpn*Carbon_price_2010_yen_max_max) %>%
+  mutate(Nominal_total_carbon_cost_Millions_yen_max_max = (Nominal_carbon_price_max_max * CO2_t_quarterly) / 10^6) %>%
+  mutate(Nominal_caron_cost_over_Nominal_GDP_pct_max_max = (Nominal_total_carbon_cost_Millions_yen_max_max / Nominal_gdp_Millions_yen_jpn) * 100) %>%
+  mutate(Optimal_price_2015_max_max_jpn = (Nominal_gdp_Millions_yen_jpn + Nominal_total_carbon_cost_Millions_yen_max_max)/Real_gdp_2015_Millions_yen_jpn) %>%
+  mutate(Optimal_real_GDP_Millions_yen_2015_max_max = Nominal_potential_gdp_Millions_yen/ Optimal_price_2015_max_max_jpn ) %>%
+  mutate(Revised_output_gap_pct_jpn_max_max = ((Real_gdp_2015_Millions_yen_jpn - Optimal_real_GDP_Millions_yen_2015_max_max)/ Optimal_real_GDP_Millions_yen_2015_max_max) *100) %>%
+  mutate(Optimal_price_2015_max_max_1past = lag(Optimal_price_2015_max_max_jpn,n=1)) %>%
+  mutate(Price_gap_jpn = ((Optimal_price_2015_max_max_jpn - Price_2015_jpn)/Price_2015_jpn)*100)
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r compare_max_max_jpn_2}
+
+## Compare price level
+
+g_price_level_compare_max_max  <- ggplot(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Optimal_price_2015_max_max_jpn, color="Optimal  price level base 2015") )  + geom_line() + ylim(0,1.2) + xlab("Quarterly Periods") + ylab("price level based 2012")
+
+g_price_level_compare_max_max <- g_price_level_compare_max_max +geom_line(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Price_2015_jpn, color="price level base 2015") )
+print(g_price_level_compare_max_max)
+
+
+## Compare GDP
+g_gdp_compare_max_max  <- ggplot(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Optimal_real_GDP_Millions_yen_2015_max_max, color="Optimal real GDP Millions of yen 2015") )  +geom_line() + xlab("Quarterly Periods") + ylab("Millions of yen based on 2015")
+
+g_gdp_compare_max_max <- g_gdp_compare_max_max +geom_line(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Real_gdp_2015_Millions_yen_jpn, color="Real GDP Millions of yen 2015") )
+print(g_gdp_compare_max_max)
+
+## Compare log GDP
+
+g_log_gdp_compare_max_max  <- ggplot(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=log(Optimal_real_GDP_Millions_yen_2015_max_max), color="log Optimal real GDP Millions of yen 2015") )  + geom_line()  + xlab("Quarterly Periods") 
+
+
+g_log_gdp_compare_max_max <- g_log_gdp_compare_max_max + geom_line(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=log(Real_gdp_2015_Millions_yen_jpn), color="log Real GDP Millions of yen 2015") )
+print(g_log_gdp_compare_max_max)
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Revised_output_gap_pct_jpn_max_max, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Conventional Real Output gap",
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)",
+     ylim=c(-20,20)
+       )
+
+  
+
+lines(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Output_gap_pct_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-20,20),
+      xlab="",
+      ylab="")
+
+
+
+legend("topright",
+      legend  =c("Revised Real Output gap(%)","Conventional Real Output gap(%)"),
+      col=c("red", "black"),
+      lwd=2,
+      lty=c(1,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+
+# to correct the deviation
+
+```{r inflation_target_max_max_jpn_2-1}
+# plot the inflation rate
+
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Price_gap_jpn, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="Price gap (%)"
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+# steady staetのinflation targetを計算
+
+#0.1429 % のインフレは正当化できる
+df_all_jpn_base[df_all_jpn_base$Quarterly_time == "2010-01-01","Price_level_measured_in_CPI_2015_jpn"]
+96.8
+
+```{r inflation_target_max_max_2-2}
+
+
+df_all_jpn_max_max <- df_all_jpn_max_max %>%
+  mutate(Carbon_price_2015_yen_max_max = Carbon_price_2010_yen_max_max *(100/96.8) )%>%
+  mutate(portion = (((Carbon_price_2015_yen_max_max * CO2_t_quarterly)/(10^6)) /Real_gdp_2015_Millions_yen_jpn) *100)
+
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$portion, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="portion (%)"
+       )
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+# approximately 5.0 %
+
+
+
+(1+ 1.03*0.05)/1.05
+
+```
+
+
+
+
+
+```{r Taylor_rule_max_max_jpn_2}
+
+
+
+df_all_jpn_max_max <- df_all_jpn_max_max %>%
+  mutate(Inflation_target_Two_pct_plus_max_max = inflation_target_2pct + 0.1429)%>%
+  mutate(Revised_Policy_rule_2 = Natural_interest_rate_DSGE + Inflation_target_Two_pct_plus_max_max + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  Inflation_target_Two_pct_plus_max_max) + Revised_output_gap_pct_jpn_max_max,
+         Conventional_policy_2 = (Natural_interest_rate_DSGE  + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn
+         )
+
+
+
+df_all_jpn_max_max <- df_all_jpn_max_max %>%
+  mutate(Revised_output_gap_pct_jpn_max_max_lead1 = lead(Revised_output_gap_pct_jpn_max_max,n=1),
+         Output_gap_pct_jpn_lead1 = lead(Output_gap_pct_jpn, n=1)) %>%
+  mutate(Natural_interest_rate_DSGE_revised_jpn_max_max = Natural_interest_rate_DSGE+ (Revised_output_gap_pct_jpn_max_max_lead1 - Output_gap_pct_jpn_lead1) - (Revised_output_gap_pct_jpn_max_max - Output_gap_pct_jpn)) %>%
+  mutate(Natural_interest_rate_LW_revised_jpn_max_max = Natural_interest_rate_LW+ (Revised_output_gap_pct_jpn_max_max_lead1 - Output_gap_pct_jpn_lead1) - (Revised_output_gap_pct_jpn_max_max - Output_gap_pct_jpn))
+
+ 
+
+
+
+
+df_all_jpn_max_max　<- df_all_jpn_max_max %>%
+  drop_na(c(Actual_policy_rate_jpn, 
+            Natural_interest_rate_DSGE,
+            Inflation_rate_measured_in_CPI_pct_jpn,
+            Inflation_target_Two_pct_plus_max_max,
+            Revised_output_gap_pct_jpn_max_max,
+            Output_gap_pct_jpn,
+            Natural_interest_rate_DSGE_revised_jpn_max_max,
+            Natural_interest_rate_LW_revised_jpn_max_max
+            )
+          )
+
+
+# initial condition for Revised poly rule 1
+
+df_all_jpn_max_max[2, "Revised_Policy_rule_1_lag"] <- df_all_jpn_max_max[1, "Actual_policy_rate_jpn"]# initial condition
+
+
+# initial condition for Conventional poly rule 1
+
+df_all_jpn_max_max[2, "Conventional_policy_1_lag"] <- df_all_jpn_max_max[1, "Actual_policy_rate_jpn"]
+
+# initial condition for Revised poly rule 3
+
+df_all_jpn_max_max[2, "Revised_Policy_rule_3_lag"] <- df_all_jpn_max_max[1, "Actual_policy_rate_jpn"]
+
+
+# initial condition for Conventional poly rule 3
+
+df_all_jpn_max_max[2, "Conventional_policy_3_lag"] <- df_all_jpn_max_max[1, "Actual_policy_rate_jpn"]
+
+
+for (j in 2:dim(df_all_jpn_max_max)[1]){
+  
+  df_all_jpn_max_max_j <- df_all_jpn_max_max[j,]
+  
+  
+  
+  # Revised policy rule 1 DSGE
+  
+  df_all_jpn_max_max_j <- df_all_jpn_max_max_j %>%
+    mutate(
+      Revised_Policy_rule_1 = 0.85 *Revised_Policy_rule_1_lag + (1 - 0.85 )*((Natural_interest_rate_DSGE_revised_jpn_max_max + Inflation_target_Two_pct_plus_max_max) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn - Inflation_target_Two_pct_plus_max_max) + Revised_output_gap_pct_jpn_max_max)
+    )
+  
+  df_all_jpn_max_max[j, "Revised_Policy_rule_1"] <- df_all_jpn_max_max_j[1, "Revised_Policy_rule_1"]
+  df_all_jpn_max_max[j+1, "Revised_Policy_rule_1_lag"] <- df_all_jpn_max_max_j[1, "Revised_Policy_rule_1"]
+  
+  
+  # Conventional policy rule 1 DSGE
+  
+  df_all_jpn_max_max_j <- df_all_jpn_max_max_j %>%
+    mutate(
+    Conventional_policy_1 = 0.85 *Conventional_policy_1_lag + (1 - 0.85 )*((Natural_interest_rate_DSGE + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn)
+    )
+  
+  df_all_jpn_max_max[j, "Conventional_policy_1"] <- df_all_jpn_max_max_j[1, "Conventional_policy_1"]
+  df_all_jpn_max_max[j+1, "Conventional_policy_1_lag"] <- df_all_jpn_max_max_j[1, "Conventional_policy_1"]
+  
+
+
+  # Revised policy rule 3
+  df_all_jpn_max_max_j <- df_all_jpn_max_max_j %>%
+    mutate(
+      Revised_Policy_rule_3 = 0.85 *Revised_Policy_rule_1_lag + (1 - 0.85 )*((Natural_interest_rate_LW_revised_jpn_max_max  + Inflation_target_Two_pct_plus_max_max) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn - Inflation_target_Two_pct_plus_max_max) + Revised_output_gap_pct_jpn_max_max)
+    )
+  
+  df_all_jpn_max_max[j, "Revised_Policy_rule_3"] <- df_all_jpn_max_max_j[1, "Revised_Policy_rule_3"]
+  df_all_jpn_max_max[j+1, "Revised_Policy_rule_3_lag"] <- df_all_jpn_max_max_j[1, "Revised_Policy_rule_3"]
+  
+  
+  
+  # Conventional policy rule 3 LW
+  
+  df_all_jpn_max_max_j <- df_all_jpn_max_max_j %>%
+    mutate(
+    Conventional_policy_3 = 0.85 *Conventional_policy_1_lag + (1 - 0.85 )*((Natural_interest_rate_LW + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn)
+    )
+  
+  df_all_jpn_max_max[j, "Conventional_policy_3"] <- df_all_jpn_max_max_j[1, "Conventional_policy_3"]
+  df_all_jpn_max_max[j+1, "Conventional_policy_3_lag"] <- df_all_jpn_max_max_j[1, "Conventional_policy_3"]
+  
+  
+  
+}
+  
+
+
+
+df_all_jpn_max_max <- df_all_jpn_max_max %>%
+  mutate(
+         Revised_Policy_rule_2 = Natural_interest_rate_DSGE_revised_jpn_max_max + Inflation_target_Two_pct_plus_max_max + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  Inflation_target_Two_pct_plus_max_max) + Revised_output_gap_pct_jpn_max_max,
+         Conventional_policy_2 = (Natural_interest_rate_DSGE  + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn
+         )%>%
+  mutate(
+    Policy_rule_gap_1 = Revised_Policy_rule_1 -  Conventional_policy_1,
+    Policy_rule_gap_2 = Revised_Policy_rule_2 -  Conventional_policy_2,
+    Policy_rule_gap_3 = Revised_Policy_rule_3 -  Conventional_policy_3
+         ) 
+
+
+
+
+
+```  
+
+
+
+
+
+```{r Taylor_rule_plot_max_max_jpn_2-1}
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Revised_Policy_rule_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-5,15),
+     main="Taylor rule vs Actual Policy interest rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Conventional_policy_1, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-5,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Actual_policy_rate_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-5,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topleft",
+      legend = c("Green Taylor rule 1","Classic Taylor rule 1", "Acutual Policy Interest rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1),
+      box.lwd = 0,
+      bg = "transparent")
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+g_plot_3  <- ggplot(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=　Revised_Policy_rule_1, color="Green Taylor rule 1") )  + geom_line() +ylim(-5, 20)+ xlab("Quarterly Periods") + ylab("Interest rate(%)")
+
+g_plot_3 <- g_plot_3 +geom_line(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Conventional_policy_1, color="Classic Taylor rule 1") )
+
+g_plot_3 <- g_plot_3 +geom_line(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Actual_policy_rate_jpn, color="Acutual Policy Interest rate") )
+
+print(g_plot_3)
+
+
+
+
+
+```
+
+```{r plot_gap_max_max_jpn_2-1}
+
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Policy_rule_gap_1, 
+     type='l',
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,5),
+     main="Revised policy rule 1 - Conventional policy rule 1",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+```
+
+
+```{r Taylor_rule_plot_max_max_jpn_2-2}
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Revised_Policy_rule_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,15),
+     main="Taylor rule vs Actual Policy interest rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Conventional_policy_2, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Actual_policy_rate_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend(x = "topleft",
+      legend  =c("Green Taylor rule 2","Classic Taylor rule 2", "Acutual Policy Interest rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      box.lwd = 0,
+      xpd = TRUE)
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+g_plot_4  <- ggplot(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=　Revised_Policy_rule_2, color="Green Taylor rule 2") )  + geom_line() +ylim(-10, 15)+ xlab("Quarterly Periods") + ylab("Interest rate(%)")
+
+g_plot_4 <- g_plot_4 +geom_line(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Conventional_policy_2, color= "Classic Taylor rule 2") )
+
+g_plot_4 <- g_plot_4 +geom_line(data=df_all_jpn_max_max, aes(x=Quarterly_time, y=Actual_policy_rate_jpn, color="Actual Policy interest rate") )
+
+print(g_plot_4)
+
+
+
+
+
+```
+
+
+
+
+
+
+
+```{r plot_gap_max_max_jpn_2-2}
+
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Policy_rule_gap_2, 
+     type='l',
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,5),
+     main="Revised policy rule 2 - Conventional policy rule 2",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+```
+
+
+
+
+
+
+
+
+
+
+
+# 2.5 degree maximum - max_100y
+
+
+
+```{r data_bind_max_100y_jpn}
+
+df_all_jpn_max_100y <- df_all_jpn %>%
+  mutate(Price_level_one_in_CPI_2010_jpn = Price_level_measured_in_CPI_2015_jpn / 96.6)%>%
+  mutate(Nominal_carbon_price_max_100y = Price_level_one_in_CPI_2010_jpn*Carbon_price_2010_yen_max_100y) %>%
+  mutate(Nominal_total_carbon_cost_Millions_yen_max_100y = (Nominal_carbon_price_max_100y * CO2_t_quarterly) / 10^6) %>%
+  mutate(Nominal_caron_cost_over_Nominal_GDP_pct_max_100y = (Nominal_total_carbon_cost_Millions_yen_max_100y / Nominal_gdp_Millions_yen_jpn) * 100) %>%
+  mutate(Optimal_price_2015_max_100y_jpn = (Nominal_gdp_Millions_yen_jpn + Nominal_total_carbon_cost_Millions_yen_max_100y)/Real_gdp_2015_Millions_yen_jpn) %>%
+  mutate(Optimal_real_GDP_Millions_yen_2015_max_100y = Nominal_potential_gdp_Millions_yen/ Optimal_price_2015_max_100y_jpn ) %>%
+  mutate(Revised_output_gap_pct_jpn_max_100y= ((Real_gdp_2015_Millions_yen_jpn - Optimal_real_GDP_Millions_yen_2015_max_100y)/ Optimal_real_GDP_Millions_yen_2015_max_100y) *100) %>%
+  mutate(Optimal_price_2015_max_100y_1past = lag(Optimal_price_2015_max_100y_jpn,n=1)) %>%
+  mutate(Price_gap_jpn = ((Optimal_price_2015_max_100y_jpn - Price_2015_jpn)/Price_2015_jpn)*100)
+
+
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r compare_max_100y_jpn_3}
+
+## Compare price level
+
+g_price_level_compare_max_100y  <- ggplot(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Optimal_price_2015_max_100y_jpn, color="Optimal  price level base 2015") )  + geom_line() + ylim(0,1.2) + xlab("Quarterly Periods") + ylab("price level based 2012")
+
+g_price_level_compare_max_100y <- g_price_level_compare_max_100y +geom_line(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Price_2015_jpn, color="price level base 2015") )
+print(g_price_level_compare_max_100y)
+
+
+## Compare GDP
+g_gdp_compare_max_100y  <- ggplot(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Optimal_real_GDP_Millions_yen_2015_max_100y, color="Optimal real GDP Millions of yen 2015") )  +geom_line() + xlab("Quarterly Periods") + ylab("Millions of yen based on 2015")
+
+g_gdp_compare_max_100y <- g_gdp_compare_max_100y +geom_line(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Real_gdp_2015_Millions_yen_jpn, color="Real GDP Millions of yen 2015") )
+print(g_gdp_compare_max_100y)
+
+## Compare log GDP
+
+g_log_gdp_compare_max_100y  <- ggplot(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=log(Optimal_real_GDP_Millions_yen_2015_max_100y), color="log Optimal real GDP Millions of yen 2015") )  + geom_line()  + xlab("Quarterly Periods") 
+
+
+g_log_gdp_compare_max_100y <- g_log_gdp_compare_max_100y + geom_line(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=log(Real_gdp_2015_Millions_yen_jpn), color="log Real GDP Millions of yen 2015") )
+print(g_log_gdp_compare_max_100y)
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Revised_output_gap_pct_jpn_max_100y, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     main="Revised Output gap (%) vs Conventional Real Output gap",
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)",
+     ylim=c(-20,20)
+       )
+
+  
+
+lines(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Output_gap_pct_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-20,20),
+      xlab="",
+      ylab="")
+
+
+
+legend("topright",
+      legend  =c("Revised Real Output gap(%)","Conventional Real Output gap(%)"),
+      col=c("red", "black"),
+      lwd=2,
+      lty=c(1,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+```
+
+
+
+
+
+```{r inflation_target_max_100y_jpn_3-1}
+# plot the inflation rate
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Price_gap_jpn, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="Price gap  (%)"
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+
+
+
+# steady staetのinflation targetを計算
+
+# 0.0874% のインフレは正当化できる
+df_all_jpn_base[df_all_jpn_base$Quarterly_time == "2010-01-01","Price_level_measured_in_CPI_2015_jpn"]
+96.8
+
+```{r inflation_target_max_100y_jpn_3-2}
+
+
+df_all_jpn_max_100y <- df_all_jpn_max_100y %>%
+  mutate(Carbon_price_2015_yen_max_100y = Carbon_price_2010_yen_max_100y *(100/96.8) )%>%
+  mutate(portion = (((Carbon_price_2015_yen_max_100y * CO2_t_quarterly)/(10^6)) /Real_gdp_2015_Millions_yen_jpn) *100)
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$portion, 
+     type='l', 
+     col = 'red', 
+     lty=1,
+     xlab= "Quarterly Periods",
+     ylab="portion (%)"
+       )
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+# approximately 3.0 %
+
+
+
+(1+ 1.03*0.03)/1.03
+
+```
+
+
+
+
+
+```{r Taylor_rule_max_100y_jpn_3-1}
+
+
+df_all_jpn_max_100y <- df_all_jpn_max_100y %>%
+  mutate(Inflation_target_Two_pct_plus_max_100y = inflation_target_2pct + 0.0874)%>%
+  mutate(Revised_Policy_rule_2 = Natural_interest_rate_DSGE + Inflation_target_Two_pct_plus_max_100y+ 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  Inflation_target_Two_pct_plus_max_100y) + Revised_output_gap_pct_jpn_max_100y,
+         Conventional_policy_2 = (Natural_interest_rate_DSGE  + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn
+         )
+
+
+
+
+
+df_all_jpn_max_100y <- df_all_jpn_max_100y %>%
+  mutate(Revised_output_gap_pct_jpn_max_100y_lead1 = lead(Revised_output_gap_pct_jpn_max_100y,n=1),
+         Output_gap_pct_jpn_lead1 = lead(Output_gap_pct_jpn, n=1)) %>%
+  mutate(Natural_interest_rate_DSGE_revised_jpn_max_100y = Natural_interest_rate_DSGE+ (Revised_output_gap_pct_jpn_max_100y_lead1 - Output_gap_pct_jpn_lead1) - (Revised_output_gap_pct_jpn_max_100y - Output_gap_pct_jpn)) %>%
+  mutate(Natural_interest_rate_LW_revised_jpn_max_100y = Natural_interest_rate_LW+ (Revised_output_gap_pct_jpn_max_100y_lead1 - Output_gap_pct_jpn_lead1) - (Revised_output_gap_pct_jpn_max_100y - Output_gap_pct_jpn))
+
+
+
+
+
+
+
+df_all_jpn_max_100y　<- df_all_jpn_max_100y %>%
+  drop_na(c(Actual_policy_rate_jpn, 
+            Natural_interest_rate_DSGE,
+            Inflation_rate_measured_in_CPI_pct_jpn,
+            Inflation_target_Two_pct_plus_max_100y,
+            Revised_output_gap_pct_jpn_max_100y,
+            Output_gap_pct_jpn,
+            Natural_interest_rate_DSGE_revised_jpn_max_100y,
+            Natural_interest_rate_LW_revised_jpn_max_100y
+            )
+          )
+
+
+# initial condition for Revised poly rule 1
+
+df_all_jpn_max_100y[2, "Revised_Policy_rule_1_lag"] <- df_all_jpn_max_100y[1, "Actual_policy_rate_jpn"]# initial condition
+
+
+# initial condition for Conventional poly rule 1
+
+df_all_jpn_max_100y[2, "Conventional_policy_1_lag"] <- df_all_jpn_max_100y[1, "Actual_policy_rate_jpn"]
+
+# initial condition for Revised poly rule 3
+
+df_all_jpn_max_100y[2, "Revised_Policy_rule_3_lag"] <- df_all_jpn_max_100y[1, "Actual_policy_rate_jpn"]
+
+
+# initial condition for Conventional poly rule 3
+
+df_all_jpn_max_100y[2, "Conventional_policy_3_lag"] <- df_all_jpn_max_100y[1, "Actual_policy_rate_jpn"]
+
+
+for (j in 2:dim(df_all_jpn_max_100y)[1]){
+  
+  df_all_jpn_max_100y_j <- df_all_jpn_max_100y[j,]
+  
+  
+  
+  # Revised policy rule 1 DSGE
+  
+  df_all_jpn_max_100y_j <- df_all_jpn_max_100y_j %>%
+    mutate(
+      Revised_Policy_rule_1 = 0.85 *Revised_Policy_rule_1_lag + (1 - 0.85 )*((Natural_interest_rate_DSGE_revised_jpn_max_100y + Inflation_target_Two_pct_plus_max_100y) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn - Inflation_target_Two_pct_plus_max_100y) + Revised_output_gap_pct_jpn_max_100y)
+    )
+  
+  df_all_jpn_max_100y[j, "Revised_Policy_rule_1"] <- df_all_jpn_max_100y_j[1, "Revised_Policy_rule_1"]
+  df_all_jpn_max_100y[j+1, "Revised_Policy_rule_1_lag"] <- df_all_jpn_max_100y_j[1, "Revised_Policy_rule_1"]
+  
+  
+  # Conventional policy rule 1 DSGE
+  
+  df_all_jpn_max_100y_j <- df_all_jpn_max_100y_j %>%
+    mutate(
+    Conventional_policy_1 = 0.85 *Conventional_policy_1_lag + (1 - 0.85 )*((Natural_interest_rate_DSGE + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn)
+    )
+  
+  df_all_jpn_max_100y[j, "Conventional_policy_1"] <- df_all_jpn_max_100y_j[1, "Conventional_policy_1"]
+  df_all_jpn_max_100y[j+1, "Conventional_policy_1_lag"] <- df_all_jpn_max_100y_j[1, "Conventional_policy_1"]
+  
+  
+
+  # Revised policy rule 3
+  df_all_jpn_max_100y_j <- df_all_jpn_max_100y_j %>%
+    mutate(
+      Revised_Policy_rule_3 = 0.85 *Revised_Policy_rule_1_lag + (1 - 0.85 )*((Natural_interest_rate_LW_revised_jpn_max_100y  + Inflation_target_Two_pct_plus_max_100y) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn - Inflation_target_Two_pct_plus_max_100y) + Revised_output_gap_pct_jpn_max_100y)
+    )
+  
+  df_all_jpn_max_100y[j, "Revised_Policy_rule_3"] <- df_all_jpn_max_100y_j[1, "Revised_Policy_rule_3"]
+  df_all_jpn_max_100y[j+1, "Revised_Policy_rule_3_lag"] <- df_all_jpn_max_100y_j[1, "Revised_Policy_rule_3"]
+  
+  
+  
+  # Conventional policy rule 3 LW
+  
+  df_all_jpn_max_100y_j <- df_all_jpn_max_100y_j %>%
+    mutate(
+    Conventional_policy_3 = 0.85 *Conventional_policy_1_lag + (1 - 0.85 )*((Natural_interest_rate_LW + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn)
+    )
+  
+  df_all_jpn_max_100y[j, "Conventional_policy_3"] <- df_all_jpn_max_100y_j[1, "Conventional_policy_3"]
+  df_all_jpn_max_100y[j+1, "Conventional_policy_3_lag"] <- df_all_jpn_max_100y_j[1, "Conventional_policy_3"]
+  
+  
+  
+}
+  
+
+
+
+df_all_jpn_max_100y <- df_all_jpn_max_100y %>%
+  mutate(
+         Revised_Policy_rule_2 = Natural_interest_rate_DSGE_revised_jpn_max_100y + Inflation_target_Two_pct_plus_max_100y + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  Inflation_target_Two_pct_plus_max_100y) + Revised_output_gap_pct_jpn_max_100y,
+         Conventional_policy_2 = (Natural_interest_rate_DSGE  + inflation_target_2pct) + 1.5* (Inflation_rate_measured_in_CPI_pct_jpn -  inflation_target_2pct) + Output_gap_pct_jpn
+         )%>%
+  mutate(
+    Policy_rule_gap_1 = Revised_Policy_rule_1 -  Conventional_policy_1,
+    Policy_rule_gap_2 = Revised_Policy_rule_2 -  Conventional_policy_2,
+    Policy_rule_gap_3 = Revised_Policy_rule_3 -  Conventional_policy_3
+         ) 
+
+```  
+
+
+
+
+
+```{r Taylor_rule_plot_max_100y_jpn_3-1}
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Revised_Policy_rule_1, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-5,15),
+     main="Taylor rule vs Actual Policy interest rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Conventional_policy_1, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-5,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Actual_policy_rate_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-5,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topleft",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 1","Classic Taylor rule 1", "Acutual Policy Interest rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+g_plot_5  <- ggplot(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=　Revised_Policy_rule_1, color="Green Taylor rule 1") )  + geom_line() +ylim(-5, 15)+ xlab("Quarterly Periods") + ylab("Interest rate(%)")
+
+g_plot_5 <- g_plot_5 +geom_line(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Conventional_policy_1, color="Classic Taylor rule 1") )
+
+g_plot_5 <- g_plot_5 +geom_line(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Actual_policy_rate_jpn, color="Acutual Policy Interest rate") )
+
+print(g_plot_5)
+
+
+
+
+
+```
+
+```{r plot_gap_max_100y_jpn_3-1}
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Policy_rule_gap_1, 
+     type='l',
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,5),
+     main="Revised policy rule 1 - Conventional policy rule 1",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+
+```
+
+
+
+
+```{r Taylor_rule_plot_max_100y_jpn_3-2}
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Revised_Policy_rule_2, 
+     type='l', 
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Interest rate (%)",
+     ylim=c(-10,15),
+     main="Taylor rule vs Actual Policy interest rate",
+     col = 'red'
+       )
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Conventional_policy_2, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Actual_policy_rate_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+
+legend("topleft",
+       box.lwd = 0,
+      legend  =c("Green Taylor rule 2","Classic Taylor rule 2", "Acutual Policy Interest rate"),
+      col=c("red", "blue","black"),
+      lwd=2,
+      lty=c(2,2,1))
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+g_plot_6  <- ggplot(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=　Revised_Policy_rule_2, color="Green Taylor rule 2") )  + geom_line() +ylim(-10, 15)+ xlab("Quarterly Periods") + ylab("Interest rate(%)")
+
+g_plot_6 <- g_plot_6 +geom_line(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Conventional_policy_2, color="Classic Taylor rule 2") )
+
+g_plot_6 <- g_plot_6 +geom_line(data=df_all_jpn_max_100y, aes(x=Quarterly_time, y=Actual_policy_rate_jpn, color="Acutual Policy Interest rate") )
+
+print(g_plot_6)
+
+
+
+
+
+```
+
+```{r plot_gap_max_100y_jpn_3-2}
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Policy_rule_gap_2, 
+     type='l',
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Policy rule gap  (%)",
+     ylim=c(0,5),
+     main="Revised policy rule 2 - Conventional policy rule 2",
+     col = 'red'
+       )
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+     
+     
+
+```
+
+
+
+
+```{r inflation_target_jpn_all, echo=FALSE}
+# plot the inflation rate
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Price_gap_jpn, 
+     type='l', 
+     col = 'red', 
+     ylim=c(0,8),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Price gap (%)"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Price_gap_jpn, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Price_gap_jpn, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius"),
+      col=c("red", "blue","orange"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+```{r outputgap_jpn_all, echo=FALSE}
+# plot the inflation rate
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Revised_output_gap_pct_jpn_base, 
+     type='l', 
+     col = 'red', 
+     ylim=c(-10,15),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Output gap (%)"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$Revised_output_gap_pct_jpn_max_max, 
+      type='l',
+      lty=2,
+      col = 'blue',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$Revised_output_gap_pct_jpn_max_100y, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$Output_gap_pct_jpn, 
+      type='l',
+      lty=1,
+      col = 'black',
+      ylim=c(-10,15),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius", "Actual output gap"),
+      col=c("red", "blue","orange", "black"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+
+# Calculate CO2 emissions
+```{r Carbon_emissions_jpn_all, echo=FALSE}
+
+df_all_jpn_base <- df_all_jpn_base %>%
+  mutate(CO2_100million_t_base = ((1 - (Price_gap_jpn/100))*CO2_t_quarterly )/ 10^8) %>%
+  mutate(CO2_100million_t = CO2_t_quarterly/ 10^8)
+
+df_all_jpn_max_max <- df_all_jpn_max_max %>%
+  mutate(CO2_100million_t_max_max = ((1 - (Price_gap_jpn/100))*CO2_t_quarterly)/10^8 )%>%
+  mutate(CO2_100million_t = CO2_t_quarterly/ 10^8)
+
+df_all_jpn_max_100y <- df_all_jpn_max_100y %>%
+  mutate(CO2_100million_t_max_100y = ((1 - (Price_gap_jpn/100))*CO2_t_quarterly)/10^8 ) %>%
+  mutate(CO2_100million_t = CO2_t_quarterly/ 10^8)
+
+
+# plot the inflation rate
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$CO2_100million_t_base, 
+     type='l', 
+     col = 'red', 
+     ylim=c(0,6),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Carbon emissions 100 million ton"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$CO2_100million_t_max_max, 
+      type='l',
+      lty=2,
+      col = 'blue',
+       ylim=c(0,6),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$CO2_100million_t_max_100y , 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(0,6),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$CO2_100million_t, 
+      type='l',
+      lty=1,
+      col = 'black',
+       ylim=c(0,6),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius", "Actual output gap"),
+      col=c("red", "blue","orange", "black"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+
+
+
+
+# Calculate CO2 emission reduction
+```{r Carbon_emission_reduction_rate_jpn_all, echo=FALSE}
+
+df_all_jpn_base <- df_all_jpn_base %>%
+  mutate(CO2_100million_t_base_diff = ((CO2_100million_t - CO2_100million_t_base)/ CO2_100million_t)* 100)
+
+df_all_jpn_max_max <- df_all_jpn_max_max %>%
+  mutate(CO2_100million_t_max_max_diff = ((CO2_100million_t - CO2_100million_t_max_max)/ CO2_100million_t)*100 )
+
+df_all_jpn_max_100y <- df_all_jpn_max_100y %>%
+  mutate(CO2_100million_t_max_100y_diff =  ((CO2_100million_t - CO2_100million_t_max_100y)/ CO2_100million_t)*100 )
+
+
+# plot the inflation rate
+
+
+plot(x=df_all_jpn_base$Quarterly_time, y=df_all_jpn_base$CO2_100million_t_base_diff, 
+     type='l', 
+     col = 'red', 
+     ylim=c(0,8),
+     lty=2,
+     xlab= "Quarterly Periods",
+     ylab="Carbon emissions reduction rate (%)"
+       )
+
+
+
+par(new=T)
+
+plot(x=df_all_jpn_max_max$Quarterly_time, y=df_all_jpn_max_max$CO2_100million_t_max_max_diff, 
+      type='l',
+      lty=2,
+      col = 'blue',
+       ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+par(new=T)
+
+
+plot(x=df_all_jpn_max_100y$Quarterly_time, y=df_all_jpn_max_100y$CO2_100million_t_max_100y_diff, 
+      type='l',
+      lty=2,
+      col = 'orange',
+      ylim=c(0,8),
+      xlab="",
+      ylab="",
+      add=TRUE)
+
+
+
+legend("topleft",
+       box.lwd=0,
+      legend  =c("The DICE model","The hard cap scenario", "The average temperatures 2.5 degrees Celsius"),
+      col=c("red", "blue","orange"),
+      lwd=2,
+      lty=c(2,2,2))
+
+
+grid(nx = NULL,
+     ny = NULL,
+     lty = 2, col = "gray")
+
+
+
+
+
+
+```
+
+
+
+
