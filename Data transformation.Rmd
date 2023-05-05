@@ -1,0 +1,200 @@
+---
+title: "Data transformation"
+author: "Kanta Ogawa"
+date: "2022-11-14"
+output: html_document
+---
+
+```{r ibrary, include=FALSE}
+library(dplyr)
+library(tidyverse)
+pacman::p_load(ggplot2)
+
+```
+
+```{r read data, include=FALSE}
+df_CPI <- read_csv("../Monetary_policy/data/World_bank/CPI.csv")
+df_GDP <- read_csv("../Monetary_policy/data/World_bank/GDP_data_wb.csv")
+df_carbon <- read_csv("../Monetary_policy/data/Annual-co2-emissions-Our_World_in_data.csv")
+
+```
+
+
+
+```{r CPI, include=FALSE}
+# inflation rate of USA
+df_CPI_transform <- df_CPI %>%
+  transform(`1999` = as.numeric(1999))
+
+df_CPI_transform$X1999 <- df_CPI$`1999`
+
+df_CPI_rev <- df_CPI_transform %>%
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year"
+  ) %>%
+  mutate(year = str_remove_all(year, "X")) %>%
+  mutate(year = as.integer(year)) %>%
+  rename("country_code" = Country.Code, 
+         "CPI" = value) 
+
+df_CPI_USA_2016 <- df_CPI_rev %>%
+  filter(country_code == "USA")%>%
+  mutate(CPI_2016 = CPI/110.1) %>% # not percentage,corrected in  proportion
+  select(country_code, year, CPI_2016)
+  
+  
+
+```
+
+
+```{r carbon}
+# CO2 emission
+df_carbon <- df_carbon %>%
+  rename("year"=Year,"country_code" = Code, "CO2_t" = `Annual CO2 emissions`)%>%
+  filter(year >= 1960)
+
+df_carbon_cost_usa <- df_carbon %>%
+    filter(country_code == "USA")
+
+ggplot(data=df_carbon_cost_usa,aes(x=year,y=CO2_t)) + 
+  geom_line()
+
+
+```
+
+
+
+
+```{r data creation}
+# compute in US dollar base
+## 0.903 euro /USdollar 
+## PPP: 0.703 in Euro area compared to the US
+vec_pre_2016 <- rev(seq((( 180 - 1.6667 ) /0.903 )/0.703, (85/0.903)/0.703, -(1.6667/0.903)/0.703)) # convert to dollar base in 2016 and corrected by PPP
+pre_2016_start_year <- 2016 - length(vec_pre_2016)
+pre_2016 <- pre_2016_start_year:2015
+
+
+vec_post_2016 <- seq((180/0.903)/0.703, (190/0.903)/0.703, (1.6667/0.903)/0.703)
+post_2016_end_year <- 2016 + length(vec_post_2016) - 1
+post_2016 <- 2016:post_2016_end_year
+
+# check length
+length(c(vec_pre_2016, vec_post_2016))
+length(c(pre_2016, post_2016))
+
+# combined vec
+Carbon_price_US2016 <- c(vec_pre_2016, vec_post_2016)
+year <- c(pre_2016, post_2016)
+df_carbon_price_usa <- data.frame(year, Carbon_price_US2016) 
+ggplot(data=df_carbon_price_usa, aes(x=year, y=Carbon_price_US2016) )  +geom_line()
+```
+
+
+
+```{r carbon cost}
+# Nominal carbon price in  US dollars
+
+df_carbon_cost_usa <- left_join(df_carbon_price_usa,df_CPI_USA_2016, by = "year") %>%
+  mutate(Nominal_carbon_price_US = Carbon_price_US2016 * CPI_2016) %>%
+  mutate(Real_carbon_price_US2016 = Carbon_price_US2016)
+
+# CO2 emission in USA
+
+df_carbon_emission_USA <- df_carbon %>%
+  filter(country_code == "USA") %>%
+  select(country_code,year,CO2_t)
+
+# Carbon cost
+df_carbon_cost_usa <- left_join(df_carbon_cost_usa, df_carbon_emission_USA, by=c("year","country_code")) %>%
+  mutate(Total_nomainal_carbon_cost = Nominal_carbon_price_US*CO2_t) %>%
+  mutate(Total_real_carbon_cost_US2016 = Real_carbon_price_US2016*CO2_t) %>%
+  select(year, country_code, Total_nomainal_carbon_cost, Total_real_carbon_cost_US2016)
+
+ggplot(data=df_carbon_cost_usa,aes(x=year, y=Total_nomainal_carbon_cost, color="Total_nomainal_carbon_cos_US") )  +geom_line()
+
+
+```
+
+
+
+```{r nominal GDP}
+# GDP- CPI2015:108.7, CPI2016:110.07
+df_GDP_transform <- df_GDP %>%
+  transform(`1999` = as.numeric(1999))
+
+df_GDP_transform$X1999 <- df_GDP$`1999`
+
+
+
+
+df_GDP_US_2016 <- df_GDP_transform %>%
+  pivot_longer(
+    cols = starts_with("X"),
+    names_to = "year"
+  ) %>%
+  mutate(year = str_remove_all(year, "X")) %>%
+  mutate(year = as.integer(year)) %>%
+  rename("country_code" = Country.Code, 
+         "GDP_2015USdollar" = value) %>%
+  mutate("Real_GDP_2016USdollar"= GDP_2015USdollar * (110.07 / 108.7)) %>%
+  select(country_code, year, Real_GDP_2016USdollar) %>%
+  filter(country_code == "USA")
+
+         
+
+
+df_nominal_GDP_US <- left_join(df_GDP_US_2016,df_CPI_USA_2016, by=c("year","country_code")) %>%
+  mutate("Nominal_GDP_USdollar" = Real_GDP_2016USdollar * CPI_2016)%>%
+  select(country_code,year,Nominal_GDP_USdollar, Real_GDP_2016USdollar, CPI_2016)
+
+g_GDP  <- ggplot(data=df_nominal_GDP_US, aes(x=year, y=Nominal_GDP_USdollar, color="Nominal GDP US") )  +geom_line()
+   
+
+g_GDP <- g_GDP +geom_line(data=df_carbon_cost_usa, aes(x=year, y=Total_nomainal_carbon_cost, color="Nominal Carbon cost US") )  
+print(g_GDP)
+
+
+```
+
+
+```{r recalmulate optimal nominal GDP}
+
+df_nominal_GDP_carbon_US <- inner_join(df_carbon_cost_usa, df_nominal_GDP_US, by=c("year", "country_code")) %>%
+  mutate("Nominal_GDP_minus_carbon" = Nominal_GDP_USdollar - Total_nomainal_carbon_cost,
+         "Real_GDP_minus_carbon_2016USdollar" =  Real_GDP_2016USdollar - Total_real_carbon_cost_US2016 ,
+         "Revised_CPI_base_2016" = Nominal_GDP_USdollar/Real_GDP_minus_carbon_2016USdollar,
+         "Carbon_Cost_over_GDP_percent" = (Total_nomainal_carbon_cost/Nominal_GDP_USdollar)*100 )
+
+
+# nominal gdp
+g_nominal_gdp <- ggplot(data = df_nominal_GDP_carbon_US, aes(x = year, y = Nominal_GDP_minus_carbon, color="Nominal_GDP_minus_carbon")) +
+    geom_line() 
+
+g_nominal_gdp  <- g_nominal_gdp + geom_line(data = df_nominal_GDP_carbon_US, aes(x = year, y =Nominal_GDP_USdollar, color= "Nominal_GDP_USdollar")) 
+print(g_nominal_gdp)
+
+
+# real gdp
+g_real_gdp <- ggplot(data = df_nominal_GDP_carbon_US, aes(x = year, y =Real_GDP_2016USdollar, color="Real_GDP_2016USdollar")) +
+    geom_line() 
+
+g_real_gdp  <- g_real_gdp + geom_line(data = df_nominal_GDP_carbon_US, aes(x = year, y =Real_GDP_minus_carbon_2016USdollar, color= "Real_GDP_minus_real_carbon_cost_2016USdollar")) 
+print(g_real_gdp)
+
+#CPI
+g_CPI <- ggplot(data = df_nominal_GDP_carbon_US, aes(x = year, y = Revised_CPI_base_2016, color="Revised_CPI_base_2016")) +
+    geom_line() 
+
+g_CPI <- g_CPI + geom_line(data = df_nominal_GDP_carbon_US, aes(x = year, y =CPI_2016, color="Conventional_CPI_2016")) +  ylim(c(0, 1.3))
+
+print(g_CPI)
+
+ggplot(data = df_nominal_GDP_carbon_US,
+      aes(x=year,y=Carbon_Cost_over_GDP_percent)) +
+  geom_line()+
+  ylim(0,100)
+```
+
+
+
